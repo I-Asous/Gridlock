@@ -27,3 +27,8 @@ class Event:
     pos: Pos
     target: Optional[str] = None
     payload: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """JSON-friendly form, as recorded in trajectory steps."""
+        return {"t": self.t, "agent_id": self.agent_id, "kind": self.kind.name, "pos": list(self.pos),
+                "target": self.target, "payload": dict(self.payload)}

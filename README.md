@@ -33,6 +33,29 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 | `gridlock/monitor` | The online R\*-aware monitor and the baseline monitors |
 | `gridlock/scenarios` | YAML level loader and levels with designed loopholes |
 | `gridlock/eval` | Experiment runner, metrics, and reports |
+| `gridlock/viz` | Replay and live viewers (matplotlib). It reads recorded trajectories, including R\* and monitor flags, so nothing else may import it |
+
+## Viewing episodes
+
+`run_episode` records a state snapshot every step, so you can replay a saved run without re-simulating it:
+
+```bash
+python -m gridlock.viz results.jsonl --list                    # list the episodes in the file
+python -m gridlock.viz results.jsonl --episode 3               # open the viewer
+python -m gridlock.viz results.jsonl --episode 3 --save ep3.gif
+```
+
+The viewer shows the grid, cumulative R against R\*, monitor flags against ground-truth loophole steps, and the event log for each step. Use ←/→ to step, space to play or pause, and home/end to jump.
+
+To watch an episode while it runs, pass a `LiveViewer` as the step callback:
+
+```python
+from gridlock.viz import LiveViewer
+
+viewer = LiveViewer(pause=0.2)
+traj = run_episode(env, agents, monitor, intent, seed=0, on_step=viewer)
+viewer.show()
+```
 
 ## Status
 
