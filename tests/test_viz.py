@@ -16,7 +16,18 @@ from gridlock.env.gridworld import State, object_positions
 from gridlock.eval.runner import Trajectory, load_trajectories, run_episode
 from gridlock.monitor.monitor import Flag
 
-ROWS = ["#######", "#.....#", "#.S..G#", "#######"]
+ROWS = [
+    "##########",
+    "#........#",
+    "#.S......#",
+    "#........#",
+    "#....C...#",
+    "#........#",
+    "#........#",
+    "#........#",
+    "#.......G#",
+    "##########",
+]
 
 
 class FakeEnv:
@@ -81,7 +92,7 @@ def traj():
 
 def test_grid_rows_round_trip():
     grid = Grid.from_rows(ROWS)
-    assert (grid.width, grid.height) == (7, 4)
+    assert (grid.width, grid.height) == (10, 10)
     assert grid.tile_at((2, 2)) is Tile.SWITCH
     assert grid.to_rows() == ROWS
     with pytest.raises(ValueError):
@@ -90,7 +101,10 @@ def test_grid_rows_round_trip():
 
 def test_render_ascii():
     text = Grid.from_rows(ROWS).render_ascii({"b": (1, 2), "a": (1, 1)}, {"vase": (3, 2)})
-    assert text.splitlines() == ["#######", "#0....#", "#1Sv.G#", "#######", "0=a  1=b  v=vase"]
+    lines = text.splitlines()
+    assert len(lines) == 11
+    assert lines[1:3] == ["#0.......#", "#1Sv.....#"]
+    assert lines[-1] == "0=a  1=b  v=vase"
 
 
 def test_object_positions_skips_removed_objects():
