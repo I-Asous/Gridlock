@@ -1,10 +1,11 @@
 """Gym-style multi-agent environment. Exposes R only; R* lives in gridlock.intent."""
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
 
 from gridlock.env.events import Event, Pos
 from gridlock.env.grid import Action, Grid
+from gridlock.env.observation import ObservationEncoder, object_positions
 from gridlock.env.referee import Referee
 
 
@@ -21,18 +22,6 @@ class State:
                 "objects": dict(self.objects), "flags": sorted(self.flags)}
 
 
-def object_positions(objects: Mapping[str, Any]) -> dict[str, Pos]:
-    """Positions of objects still on the board. A value may be a position or a dict with a "pos"
-    key; anything else (e.g. None once an object is picked up) is skipped."""
-    positions = {}
-    for oid, value in dict(objects).items():
-        if isinstance(value, Mapping):
-            value = value.get("pos")
-        if isinstance(value, (tuple, list)) and len(value) == 2 and all(isinstance(c, int) for c in value):
-            positions[oid] = (value[0], value[1])
-    return positions
-
-
 class GridWorld:
     def __init__(self, scenario, max_steps: int = 100):
         self.scenario = scenario
@@ -40,6 +29,7 @@ class GridWorld:
         self.referee = Referee(self.grid)
         self.reward_fn = scenario.reward_fn
         self.max_steps = max_steps
+        self.encoder = ObservationEncoder.for_scenario(scenario)
         self.state: Optional[State] = None
 
     def reset(self, seed: Optional[int] = None) -> tuple[dict[str, Any], dict]:
@@ -50,7 +40,8 @@ class GridWorld:
         raise NotImplementedError
 
     def observe(self, agent_id: str) -> Any:
-        raise NotImplementedError
+        """This agent's view of the current state; see ObservationEncoder."""
+        return self.encoder.encode(self.state, agent_id)
 
     # Lookahead hooks for the A* and CSP planners.
     def get_state(self) -> State:

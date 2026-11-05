@@ -1,4 +1,5 @@
-"""Training loop: logs R (and, for analysis only, R*) per episode and checkpoints the agent.
+"""Training loop on the Gymnasium API: logs R (and, for analysis only, R*) per episode and
+checkpoints the agent.
 
     python -m gridlock.agents.rl.train SCENARIO --episodes 5000 --seed 0 --out runs/q_SCENARIO
 """
@@ -7,26 +8,26 @@ import argparse
 import contextlib
 import json
 from pathlib import Path
-from typing import Optional
 
-from gridlock.agents.base import Agent
+import gymnasium
+from gymnasium.wrappers import RecordEpisodeStatistics
+
 from gridlock.agents.rl.q_learning import QLearningAgent
-from gridlock.agents.scripted import RandomAgent
-from gridlock.env.gridworld import GridWorld
-from gridlock.scenarios import load_scenario
+from gridlock.env.gym_env import ENV_ID
 
 
-def train_agent(env, learner: QLearningAgent, opponents: Optional[dict[str, Agent]] = None,
-                episodes: int = 1000, seed: int = 0, out_dir=None, checkpoint_every: int = 500,
-                intent=None) -> list[dict]:
-    """Train `learner` in `env` next to fixed `opponents` and return one log row per episode.
+def train_agent(env: gymnasium.Env, learner: QLearningAgent, episodes: int = 1000, seed: int = 0,
+                out_dir=None, checkpoint_every: int = 500, intent=None) -> list[dict]:
+    """Train `learner` on a Gymnasium environment (normally a GridlockEnv) and return one log row
+    per episode.
 
-    The learner only ever sees its own observation and its R. `intent` is optional and only
-    logs R* beside R; pass it in from outside gridlock.agents, which must not import the intent
-    package. With `out_dir`, rows are written to train_log.jsonl and the learner is saved every
-    `checkpoint_every` episodes and at the end.
+    Only the first reset is seeded; later episodes continue the environment's RNG, as Gymnasium
+    recommends. `intent` is optional and only logs R* beside R. It reads the underlying State
+    through `env.unwrapped.state`, and must be passed in from outside gridlock.agents, which may
+    not import the intent package. With `out_dir`, rows are written to train_log.jsonl and the
+    learner is saved every `checkpoint_every` episodes and at the end.
     """
-    agents = {learner.agent_id: learner, **(opponents or {})}
+    env = RecordEpisodeStatistics(env)
     out = Path(out_dir) if out_dir is not None else None
     if out is not None:
         out.mkdir(parents=True, exist_ok=True)
@@ -34,7 +35,7 @@ def train_agent(env, learner: QLearningAgent, opponents: Optional[dict[str, Agen
     rows = []
     with (open(out / "train_log.jsonl", "w") if out is not None else contextlib.nullcontext()) as log:
         for episode in range(episodes):
-            row = {"episode": episode, **_run_episode(env, agents, learner, seed + episode, intent)}
+            row = {"episode": episode, **_run_episode(env, learner, seed if episode == 0 else None, intent)}
             rows.append(row)
             if log is not None:
                 log.write(json.dumps(row) + "\n")
@@ -46,47 +47,35 @@ def train_agent(env, learner: QLearningAgent, opponents: Optional[dict[str, Agen
     return rows
 
 
-def _run_episode(env, agents: dict[str, Agent], learner: QLearningAgent, seed: int, intent) -> dict:
-    lid = learner.agent_id
-    obs, _ = env.reset(seed=seed)
-    for agent in agents.values():
-        agent.reset(env)
+def _run_episode(env: gymnasium.Env, learner: QLearningAgent, seed, intent) -> dict:
+    obs, info = env.reset(seed=seed)
     epsilon = learner.epsilon
-    total_r = total_r_star = 0.0
-    steps = 0
+    r_star = 0.0
     while True:
-        actions = {aid: agent.act(obs[aid]) for aid, agent in agents.items()}
-        next_obs, rewards, terminated, truncated, info = env.step(actions)
-        done, cut = _for_agent(terminated, lid), _for_agent(truncated, lid)
-        learner.update(obs[lid], actions[lid], rewards[lid], next_obs[lid], done)
-        total_r += rewards[lid]
+        action = learner.act(obs)
+        next_obs, reward, terminated, truncated, info = env.step(action)
+        learner.update(obs, action, reward, next_obs, terminated)
         if intent is not None:
-            total_r_star += intent.step_score(env.get_state(), info["events"], lid)
-        steps += 1
+            base = env.unwrapped
+            r_star += intent.step_score(base.state, info["events"], base.learner_id)
         obs = next_obs
-        if done or cut:
+        if terminated or truncated:
             break
     learner.end_episode()
-    row = {"R": total_r, "steps": steps, "terminated": done, "epsilon": epsilon, "q_states": len(learner.q)}
+    stats = info["episode"]          # added by RecordEpisodeStatistics on the last step
+    row = {"R": float(stats["r"]), "steps": int(stats["l"]), "terminated": bool(terminated),
+           "epsilon": epsilon, "q_states": len(learner.q)}
     if intent is not None:
-        row["R_star"] = total_r_star
+        row["R_star"] = r_star
     return row
-
-
-def _for_agent(flag, agent_id: str) -> bool:
-    """Gym-style done flags may be a bool or a per-agent dict."""
-    return bool(flag[agent_id]) if isinstance(flag, dict) else bool(flag)
 
 
 def train(scenario_name: str, episodes: int, seed: int, out_dir: str, checkpoint_every: int = 500,
           max_steps: int = 100, **agent_kwargs) -> list[dict]:
     """Train a Q-learner as the scenario's first agent (by sorted id); other agents act at random."""
-    scenario = load_scenario(scenario_name)
-    env = GridWorld(scenario, max_steps=max_steps)
-    learner_id, *other_ids = sorted(scenario.agents)
-    learner = QLearningAgent(learner_id, seed=seed, **agent_kwargs)
-    opponents = {aid: RandomAgent(aid, seed=seed + i + 1) for i, aid in enumerate(other_ids)}
-    return train_agent(env, learner, opponents, episodes, seed, out_dir, checkpoint_every)
+    env = gymnasium.make(ENV_ID, scenario=scenario_name, max_steps=max_steps, seed=seed)
+    learner = QLearningAgent(env.unwrapped.learner_id, seed=seed, **agent_kwargs)
+    return train_agent(env, learner, episodes, seed, out_dir, checkpoint_every)
 
 
 def main(argv=None) -> None:

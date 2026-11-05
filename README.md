@@ -26,7 +26,7 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 
 | Package | Purpose |
 | --- | --- |
-| `gridlock/env` | Grid, tiles, actions, the typed event log, the referee (legality and multi-agent conflicts), and the Gym-style `GridWorld` |
+| `gridlock/env` | Grid, tiles, actions, the typed event log, the referee (legality and multi-agent conflicts), the multi-agent `GridWorld`, and `GridlockEnv`, a single-agent [Gymnasium](https://gymnasium.farama.org) view of it for RL |
 | `gridlock/rules` | `RewardFn`, the stated reward R |
 | `gridlock/intent` | `IntentFn`, the hidden intent R\*. **Agents must never import this package.** |
 | `gridlock/agents` | A\*, CSP, scripted agents, and RL agents in `agents/rl` |
@@ -35,7 +35,33 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 | `gridlock/eval` | Experiment runner, metrics, and reports |
 | `gridlock/viz` | Replay and live viewers (matplotlib). It reads recorded trajectories, including R\* and monitor flags, so nothing else may import it |
 
+## Setup
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m pytest
+```
+
 ## Training the Q-learner
+
+The RL agent trains on a standard [Gymnasium](https://gymnasium.farama.org) environment. `GridlockEnv` gives one learner a single-agent view of the multi-agent `GridWorld`, with the other agents acting as fixed policies inside `step()`:
+
+```python
+import gymnasium
+import gridlock.env   # registers gridlock/Gridlock-v0
+
+env = gymnasium.make("gridlock/Gridlock-v0", scenario="vase")
+obs, info = env.reset(seed=0)            # obs: integer vector, see gridlock/env/observation.py
+obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+```
+
+- **Actions:** `Discrete(6)`, where action *i* is `gridlock.env.gym_env.ACTIONS[i]`. `step()` also accepts an `Action`.
+- **Observations:** `MultiDiscrete`. The vector is the learner's own position, then the other agents' positions, then the objects' positions, then one bit for each state flag the level declares. The step counter is left out.
+- **Rewards and info:** the reward is the learner's R only, and `info["events"]` carries the step's event log. R\* is never exposed.
+
+Because it is a plain Gymnasium environment, Gymnasium wrappers and libraries such as Stable-Baselines3 work on it too, for example for the DQN fallback.
+
+To train from the command line:
 
 ```bash
 python -m gridlock.agents.rl.train SCENARIO --episodes 5000 --seed 0 --out runs/q_SCENARIO

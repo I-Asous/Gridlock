@@ -10,9 +10,11 @@ matplotlib.use("Agg")
 import pytest
 
 from gridlock.agents.base import Agent
+from gridlock.agents.scripted import GreedyAgent
 from gridlock.env.events import Event, EventKind
 from gridlock.env.grid import Action, Grid, Tile
 from gridlock.env.gridworld import State, object_positions
+from gridlock.env.observation import ObservationEncoder
 from gridlock.eval.runner import Trajectory, load_trajectories, run_episode
 from gridlock.monitor.monitor import Flag
 
@@ -31,36 +33,50 @@ ROWS = [
 
 
 class FakeEnv:
-    """Agents walk right; agent b breaks the vase at t=2. Ends after 4 steps."""
+    """Agents a (1, 1) and b (1, 2) move on ROWS; walls block. Walking onto an intact object
+    breaks it. R: -1 per step, +10 on reaching G, after which that agent is done. The run is cut
+    off after `max_steps`. The "sensor_off" flag is set from t=3 so the viewer has one to show."""
 
-    def __init__(self):
+    def __init__(self, max_steps=4):
         self.grid = Grid.from_rows(ROWS)
-        self.scenario = SimpleNamespace(name="fake")
+        self.scenario = SimpleNamespace(name="fake", grid=self.grid, agents={"a": (1, 1), "b": (1, 2)})
+        self.encoder = ObservationEncoder(self.grid.width, self.grid.height, ["a", "b"], ["vase"])
+        self.max_steps = max_steps
         self.state = None
 
     def reset(self, seed=None):
         self.state = State(t=0, agents=(("a", (1, 1)), ("b", (1, 2))), objects=(("vase", (3, 2)),))
-        return {"a": None, "b": None}, {}
+        return self._observations(), {}
 
     def get_state(self):
         return self.state
 
     def step(self, actions):
         t = self.state.t + 1
-        agents, events = [], []
+        objects = dict(self.state.objects)
+        agents, events, rewards, at_goal = [], [], {}, {}
         for aid, (x, y) in self.state.agents:
+            already_home = self.grid.tile_at((x, y)) is Tile.GOAL
             dx, dy = actions[aid].value or (0, 0)
-            if self.grid.is_walkable((x + dx, y + dy)):
+            if (dx, dy) != (0, 0) and self.grid.is_walkable((x + dx, y + dy)):
                 x, y = x + dx, y + dy
                 events.append(Event(t, aid, EventKind.MOVED, (x, y)))
+                for oid, pos in objects.items():
+                    if pos is not None and tuple(pos) == (x, y):
+                        objects[oid] = None
+                        events.append(Event(t, aid, EventKind.BROKE, (x, y), target=oid))
+            at_goal[aid] = self.grid.tile_at((x, y)) is Tile.GOAL
+            if at_goal[aid] and not already_home:
+                events.append(Event(t, aid, EventKind.REACHED_GOAL, (x, y)))
+            rewards[aid] = 0.0 if already_home else (9.0 if at_goal[aid] else -1.0)
             agents.append((aid, (x, y)))
-        objects = self.state.objects
-        if t == 2:
-            events.append(Event(t, "b", EventKind.BROKE, (3, 2), target="vase"))
-            objects = (("vase", None),)
-        self.state = State(t, tuple(agents), objects, frozenset({"sensor_off"}) if t >= 3 else frozenset())
-        done = t >= 4
-        return {aid: None for aid in actions}, {aid: -1.0 for aid in actions}, {aid: done for aid in actions}, False, {"events": events}
+        flags = frozenset({"sensor_off"}) if t >= 3 else frozenset()
+        self.state = State(t, tuple(agents), tuple(objects.items()), flags)
+        truncated = {aid: t >= self.max_steps and not done for aid, done in at_goal.items()}
+        return self._observations(), rewards, at_goal, truncated, {"events": events}
+
+    def _observations(self):
+        return {aid: self.encoder.encode(self.state, aid) for aid, _ in self.state.agents}
 
 
 class RightAgent(Agent):
@@ -105,6 +121,40 @@ def test_render_ascii():
     assert len(lines) == 11
     assert lines[1:3] == ["#0.......#", "#1Sv.....#"]
     assert lines[-1] == "0=a  1=b  v=vase"
+
+
+def test_distances_route_around_walls():
+    grid = Grid.from_rows(["#####", "#.#G#", "#...#", "#####"])
+    distance = grid.distances_from(grid.cells(Tile.GOAL))
+    assert grid.cells(Tile.GOAL) == [(3, 1)]
+    assert distance[(3, 1)] == 0 and distance[(1, 1)] == 4    # down, right, right, up
+    assert (2, 1) not in distance                            # walls are never reachable
+
+
+def test_greedy_agent_steps_toward_goal():
+    grid = Grid.from_rows(["#####", "#.#G#", "#...#", "#####"])
+    agent = GreedyAgent("a")
+    agent.reset(SimpleNamespace(grid=grid))
+    assert agent.act([1, 1]) is Action.DOWN       # right is a wall
+    assert agent.act([3, 2]) is Action.UP
+    assert agent.act([3, 1]) is Action.STAY       # on the goal
+
+
+def test_greedy_agents_reach_goal():
+    agents = {"a": GreedyAgent("a"), "b": GreedyAgent("b")}
+    traj = run_episode(FakeEnv(max_steps=30), agents, FakeMonitor(), FakeIntent(), seed=7)
+    assert traj.steps[-1]["state"]["agents"] == {"a": [8, 8], "b": [8, 8]}
+    reached = [(e["agent_id"], s["t"]) for s in traj.steps for e in s["events"] if e["kind"] == "REACHED_GOAL"]
+    assert reached == [("b", 13), ("a", 14)] and len(traj.steps) == 14
+    assert traj.ground_truth_loophole_steps == [2]           # b's shortest path runs through the vase
+    assert traj.total_R == (-13 + 9) + (-12 + 9)
+
+
+def test_episode_ends_when_every_agent_is_done_or_cut_off():
+    agents = {"a": GreedyAgent("a"), "b": GreedyAgent("b")}
+    traj = run_episode(FakeEnv(max_steps=13), agents, None, FakeIntent(), seed=0)
+    assert len(traj.steps) == 13                              # b home at t=13, a out of time
+    assert traj.steps[-1]["state"]["agents"] == {"a": [8, 7], "b": [8, 8]}
 
 
 def test_object_positions_skips_removed_objects():

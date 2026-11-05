@@ -1,30 +1,28 @@
-"""Tabular Q-learning on hashed environment states. Trained on R only."""
+"""Tabular Q-learning over Gymnasium observations. Trained on R only.
+
+Q-values are kept per observation as a numpy row with one entry per Gymnasium action index
+(gridlock.env.gym_env.ACTIONS).
+"""
 
 import pickle
-import random
 from collections import defaultdict
+from functools import partial
 from typing import Hashable, Optional
+
+import numpy as np
 
 from gridlock.agents.base import Agent
 from gridlock.env.grid import Action
-from gridlock.env.gridworld import State
-
-ACTIONS = tuple(Action)
-
-
-def _zero_row() -> dict[Action, float]:
-    return {action: 0.0 for action in ACTIONS}
+from gridlock.env.gym_env import ACTIONS
 
 
 def state_key(obs) -> Hashable:
-    """Q-table key for an observation.
+    """Q-table key. Gymnasium observations are numpy arrays, which can't be dict keys."""
+    return tuple(obs.tolist()) if isinstance(obs, np.ndarray) else obs
 
-    A State's step counter is dropped: with it, every timestep would be a separate table entry
-    and nothing learned at t=5 would carry over to t=6. Any other observation must be hashable.
-    """
-    if isinstance(obs, State):
-        return obs.agents, obs.objects, obs.flags
-    return obs
+
+def action_index(action) -> int:
+    return ACTIONS.index(action) if isinstance(action, Action) else int(action)
 
 
 class QLearningAgent(Agent):
@@ -36,30 +34,32 @@ class QLearningAgent(Agent):
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
         self.epsilon_decay = epsilon_decay
-        self.rng = random.Random(seed)
-        self.q: defaultdict = defaultdict(_zero_row)
+        self.rng = np.random.default_rng(seed)
+        self.q: defaultdict = defaultdict(partial(np.zeros, len(ACTIONS)))
         self.training = True
 
     def act(self, obs) -> Action:
-        """ε-greedy while training, greedy otherwise. Set `training = False` to evaluate."""
+        """ε-greedy while training, greedy otherwise; set `training = False` to evaluate.
+        GridlockEnv.step accepts the returned Action as well as an action index."""
         if self.training and self.rng.random() < self.epsilon:
-            return self.rng.choice(ACTIONS)
+            return ACTIONS[self.rng.integers(len(ACTIONS))]
         return self.greedy(obs)
 
     def greedy(self, obs) -> Action:
         """Highest-valued action, ties broken at random. Looking up an unseen state doesn't add it."""
         row = self.q.get(state_key(obs))
         if row is None:
-            return self.rng.choice(ACTIONS)
-        best = max(row.values())
-        return self.rng.choice([action for action, value in row.items() if value == best])
+            return ACTIONS[self.rng.integers(len(ACTIONS))]
+        return ACTIONS[self.rng.choice(np.flatnonzero(row == row.max()))]
 
-    def update(self, obs, action: Action, reward: float, next_obs, done: bool) -> None:
-        """One Q-learning backup. Pass done=True only when the episode really ended for this agent
-        (terminated); on a time-limit truncation pass False so the target still bootstraps."""
+    def update(self, obs, action, reward: float, next_obs, terminated: bool) -> None:
+        """One Q-learning backup. Pass Gymnasium's `terminated`, not `truncated`: when an episode
+        is only cut off by the time limit, the target should still bootstrap from next_obs."""
         row = self.q[state_key(obs)]
-        target = reward if done else reward + self.gamma * max(self.q[state_key(next_obs)].values())
-        row[action] += self.alpha * (target - row[action])
+        next_row = self.q.get(state_key(next_obs))
+        future = 0.0 if terminated or next_row is None else float(next_row.max())
+        i = action_index(action)
+        row[i] += self.alpha * (reward + self.gamma * future - row[i])
 
     def end_episode(self) -> None:
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)

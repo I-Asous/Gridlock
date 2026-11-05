@@ -1,5 +1,6 @@
 """Static grid layout, tiles, objects and rendering."""
 
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Iterable, Optional
@@ -74,6 +75,28 @@ class Grid:
     def is_walkable(self, pos: Pos) -> bool:
         return self.in_bounds(pos) and self.tile_at(pos) is not Tile.WALL
 
+    def cells(self, tile: Tile) -> list[Pos]:
+        """Every position holding `tile`, row by row."""
+        return [(x, y) for y, row in enumerate(self.tiles) for x, t in enumerate(row) if t is tile]
+
+    def distances_from(self, sources: Iterable[Pos]) -> dict[Pos, int]:
+        """Steps from the nearest source to every reachable cell, moving up/down/left/right
+        around walls (breadth-first search). Unreachable cells are left out."""
+        distance: dict[Pos, int] = {}
+        queue: deque[Pos] = deque()
+        for pos in sources:
+            if self.is_walkable(pos) and pos not in distance:
+                distance[pos] = 0
+                queue.append(pos)
+        while queue:
+            x, y = queue.popleft()
+            for dx, dy in ((1, 0), (0, 1), (-1, 0), (0, -1)):
+                nxt = (x + dx, y + dy)
+                if nxt not in distance and self.is_walkable(nxt):
+                    distance[nxt] = distance[(x, y)] + 1
+                    queue.append(nxt)
+        return distance
+
     def render_ascii(self, agents: dict[str, Pos], objects: Optional[dict[str, Pos]] = None) -> str:
         """Tiles as their characters, objects as the lowercase first letter of their id, and
         agents as digits in sorted-id order. A legend line follows when anything is placed.
@@ -127,10 +150,17 @@ class Grid:
             ax.add_patch(Rectangle((x - 0.3, y - 0.3), 0.6, 0.6, fc=OBJECT_COLOR, ec="white", lw=1, zorder=2))
             ax.text(x, y, oid[0].lower(), ha="center", va="center", fontsize=9, color="white", zorder=2.5)
 
-        for aid, (x, y) in agents.items():
-            ax.add_patch(Circle((x, y), 0.36, fc=colors.get(aid, "#6b7280"), ec="white", lw=1.5, zorder=3))
-            ax.text(x, y, labels.get(aid, "?"), ha="center", va="center", fontsize=9,
-                    fontweight="bold", color="white", zorder=3.5)
+        sharing: dict[Pos, list[str]] = {}
+        for aid in sorted(agents):
+            sharing.setdefault(tuple(agents[aid]), []).append(aid)
+        for (x, y), ids in sharing.items():
+            # Agents on the same cell sit side by side, shrunk to fit.
+            radius = 0.36 if len(ids) == 1 else 0.4 / len(ids)
+            for i, aid in enumerate(ids):
+                cx = x + (i - (len(ids) - 1) / 2) * 0.8 / len(ids)
+                ax.add_patch(Circle((cx, y), radius, fc=colors.get(aid, "#6b7280"), ec="white", lw=1.5, zorder=3))
+                ax.text(cx, y, labels.get(aid, "?"), ha="center", va="center", fontsize=9 if len(ids) == 1 else 7,
+                        fontweight="bold", color="white", zorder=3.5)
 
         handles = [Line2D([], [], ls="", marker="o", ms=9, mfc=colors.get(aid, "#6b7280"), mec="white",
                           label=f"{labels.get(aid, '?')}  {aid}") for aid in sorted(agents)]

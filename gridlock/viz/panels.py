@@ -64,7 +64,6 @@ class Dashboard:
     def _draw_summary(self) -> None:
         tr = self.traj
         self.fig.suptitle(
-            f"{tr.scenario}  ·  {tr.agent}  ·  seed {tr.seed}  ·  {tr.git_hash}\n"
             f"R = {tr.total_R:+.2f}     R* = {tr.total_R_star:+.2f}     "
             f"monitor flags: {len(tr.monitor_flags)}     loophole steps: {len(tr.ground_truth_loophole_steps)}",
             fontsize=10)

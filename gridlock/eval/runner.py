@@ -94,7 +94,7 @@ def run_episode(env, agents: dict, monitor, intent, seed: int,
             traj.ground_truth_loophole_steps.append(state.t)
         if on_step is not None:
             on_step(traj, step)
-        if _done(terminated) or _done(truncated):
+        if all(_flag(terminated, aid) or _flag(truncated, aid) for aid in agents):
             return traj
 
 
@@ -102,9 +102,10 @@ def run_experiment(config_path: str, out_path: str) -> None:
     raise NotImplementedError
 
 
-def _done(flag) -> bool:
-    """Gym-style done flags may be a bool or a per-agent dict; a dict is done when every agent is."""
-    return all(flag.values()) if isinstance(flag, dict) else bool(flag)
+def _flag(flag, agent_id: str) -> bool:
+    """Gym-style done flags may be a bool or a per-agent dict. The episode ends once every agent
+    is either terminated or truncated, e.g. one at the goal and the other out of time."""
+    return bool(flag[agent_id]) if isinstance(flag, dict) else bool(flag)
 
 
 def _state_hash(snapshot: dict) -> str:

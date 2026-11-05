@@ -17,6 +17,7 @@ class Scenario:
     reward_fn: RewardFn
     intent_config: dict                     # read only by monitor / eval
     designed_loopholes: list[dict] = field(default_factory=list)
+    flags: list[str] = field(default_factory=list)   # state flags the level can set, e.g. "sensor_off"; observed
 
 
 def load_scenario(name: str) -> Scenario:
