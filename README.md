@@ -35,6 +35,16 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 | `gridlock/eval` | Experiment runner, metrics, and reports |
 | `gridlock/viz` | Replay and live viewers (matplotlib). It reads recorded trajectories, including R\* and monitor flags, so nothing else may import it |
 
+## Training the Q-learner
+
+```bash
+python -m gridlock.agents.rl.train SCENARIO --episodes 5000 --seed 0 --out runs/q_SCENARIO
+```
+
+The learner is the scenario's first agent (by sorted id); any other agents act at random. The run writes `train_log.jsonl` (one row per episode) and checkpoints `q_ep*.pkl` / `q_final.pkl`. To plot the curves, use `gridlock.eval.report.plot_training_curves(log_path, out_path)`.
+
+The learner sees only its observation and R. To log R\* beside R, call `train_agent(..., intent=...)` from outside `gridlock/agents`. A test checks that nothing under `gridlock/agents` imports `gridlock.intent`.
+
 ## Viewing episodes
 
 `run_episode` records a state snapshot every step, so you can replay a saved run without re-simulating it:
