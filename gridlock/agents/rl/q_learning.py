@@ -26,6 +26,9 @@ def action_index(action) -> int:
 
 
 class QLearningAgent(Agent):
+    name = "q"            # label for checkpoints (q_ep*.pkl) and the train CLI's --algo
+    on_policy = False     # the training loop updates before choosing the next action
+
     def __init__(self, agent_id: str, alpha: float = 0.1, gamma: float = 0.99, epsilon: float = 1.0,
                  epsilon_min: float = 0.05, epsilon_decay: float = 0.995, seed: Optional[int] = None):
         super().__init__(agent_id)
@@ -52,9 +55,10 @@ class QLearningAgent(Agent):
             return ACTIONS[self.rng.integers(len(ACTIONS))]
         return ACTIONS[self.rng.choice(np.flatnonzero(row == row.max()))]
 
-    def update(self, obs, action, reward: float, next_obs, terminated: bool) -> None:
+    def update(self, obs, action, reward: float, next_obs, terminated: bool, next_action=None) -> None:
         """One Q-learning backup. Pass Gymnasium's `terminated`, not `truncated`: when an episode
-        is only cut off by the time limit, the target should still bootstrap from next_obs."""
+        is only cut off by the time limit, the target should still bootstrap from next_obs.
+        `next_action` is ignored; it is accepted so Q-learning and SARSA share one interface."""
         row = self.q[state_key(obs)]
         next_row = self.q.get(state_key(next_obs))
         future = 0.0 if terminated or next_row is None else float(next_row.max())

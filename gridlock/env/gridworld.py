@@ -33,6 +33,9 @@ class GridWorld:
         self.state: Optional[State] = None
 
     def reset(self, seed: Optional[int] = None) -> tuple[dict[str, Any], dict]:
+        """Returns ({agent_id: self.observe(agent_id)}, info). step() returns observations the same
+        way, so a learner trained through GridlockEnv sees the same vectors when it is evaluated
+        directly on the GridWorld by gridlock.eval.runner."""
         raise NotImplementedError
 
     def step(self, actions: dict[str, Action]):

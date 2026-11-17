@@ -13,7 +13,7 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 
 1. **Elicit gaming.** Run several kinds of agents on these levels and measure how often, and how badly, each one exploits the gap between R and R\*:
    - planners: A\* and CSP
-   - learners: tabular Q-learning, with DQN as a fallback
+   - learners: tabular Q-learning (off-policy) and SARSA (on-policy), with DQN as a fallback
    - scripted baselines: random and greedy
 2. **Detect it online.** Build a monitor that watches the event stream step by step and flags an agent as soon as its behaviour diverges from intent, without waiting for the episode to end.
 3. **Evaluate detection.** Compare the online monitor against non-ML baselines (an end-of-episode audit and a revisit/path-overrun heuristic) using:
@@ -42,9 +42,9 @@ python3 -m pip install -r requirements.txt
 python3 -m pytest
 ```
 
-## Training the Q-learner
+## Training the learners
 
-The RL agent trains on a standard [Gymnasium](https://gymnasium.farama.org) environment. `GridlockEnv` gives one learner a single-agent view of the multi-agent `GridWorld`, with the other agents acting as fixed policies inside `step()`:
+The RL agents train on a standard [Gymnasium](https://gymnasium.farama.org) environment. `GridlockEnv` gives one learner a single-agent view of the multi-agent `GridWorld`, with the other agents acting as fixed policies inside `step()`:
 
 ```python
 import gymnasium
@@ -61,15 +61,32 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 
 Because it is a plain Gymnasium environment, Gymnasium wrappers and libraries such as Stable-Baselines3 work on it too, for example for the DQN fallback.
 
+There are two tabular learners, which share one training loop:
+
+- **`QLearningAgent`** (`--algo q`) is off-policy. It backs up `max Q(s', ·)` and so learns the value of the greedy policy.
+- **`SARSAAgent`** (`--algo sarsa`) is on-policy. It backs up `Q(s', a')` for the action `a'` its ε-greedy policy actually takes next, so the cost of exploratory missteps is part of what it learns. On a level where a loophole sits next to a hazard, this is where the two are expected to differ: Q-learning takes the risky edge and SARSA keeps its distance. `tests/test_rl.py` checks this on a small cliff world.
+
 To train from the command line:
 
 ```bash
-python -m gridlock.agents.rl.train SCENARIO --episodes 5000 --seed 0 --out runs/q_SCENARIO
+python -m gridlock.agents.rl.train SCENARIO --algo q     --episodes 5000 --seed 0 --out runs/q_SCENARIO
+python -m gridlock.agents.rl.train SCENARIO --algo sarsa --episodes 5000 --seed 0 --out runs/sarsa_SCENARIO
 ```
 
-The learner is the scenario's first agent (by sorted id); any other agents act at random. The run writes `train_log.jsonl` (one row per episode) and checkpoints `q_ep*.pkl` / `q_final.pkl`. To plot the curves, use `gridlock.eval.report.plot_training_curves(log_path, out_path)`.
+The learner is the scenario's first agent (by sorted id); any other agents act at random. The run writes `train_log.jsonl` (one row per episode) and checkpoints named after the algorithm, such as `q_ep*.pkl` / `q_final.pkl` or `sarsa_ep*.pkl` / `sarsa_final.pkl`. To plot the curves, use `gridlock.eval.report.plot_training_curves(log_paths, out_path)`. Pass one log, or several to overlay them, for example `["runs/q_vase/train_log.jsonl", "runs/sarsa_vase/train_log.jsonl"]` or a `{label: path}` dict.
 
 The learner sees only its observation and R. To log R\* beside R, call `train_agent(..., intent=...)` from outside `gridlock/agents`. A test checks that nothing under `gridlock/agents` imports `gridlock.intent`.
+
+## Running experiments
+
+An experiment config lists scenarios, seeds and agent specs. [`experiments/sarsa_vs_q.yaml`](experiments/sarsa_vs_q.yaml) compares SARSA, Q-learning and the greedy baseline. The format is documented in `gridlock.eval.runner.run_experiment`.
+
+```bash
+python -m gridlock.eval.runner experiments/sarsa_vs_q.yaml runs/sarsa_vs_q/results.jsonl
+python -m gridlock.eval.report runs/sarsa_vs_q/results.jsonl     # per scenario x agent: R, R*, loophole rate, detection stats
+```
+
+Each spec controls the scenario's first agent. A learner is trained on R alone and then evaluated greedily, one episode per seed. Each trajectory is labelled with the spec's `name`, so the results file also works with the viewer below. Detection statistics come from `gridlock.eval.metrics.detection_stats`. Pass `--tolerance k` to let a flag trail its loophole step by up to k steps and still count.
 
 ## Viewing episodes
 
