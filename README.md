@@ -42,6 +42,8 @@ python3 -m pip install -r requirements.txt
 python3 -m pytest
 ```
 
+For every script, its flags, and the usual order to run them, see [RUNNING.md](RUNNING.md).
+
 ## Training the learners
 
 The RL agents train on a standard [Gymnasium](https://gymnasium.farama.org) environment. `GridlockEnv` gives one learner a single-agent view of the multi-agent `GridWorld`, with the other agents acting as fixed policies inside `step()`:
