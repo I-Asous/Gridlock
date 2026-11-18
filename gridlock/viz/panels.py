@@ -4,6 +4,7 @@ They read only the recorded Trajectory (never IntentFn or the monitor), so any s
 viewed later and nothing here can leak R* back into an agent.
 """
 
+import textwrap
 from itertools import accumulate
 
 from matplotlib.patches import Circle
@@ -17,10 +18,13 @@ LOOPHOLE_COLOR = "#9ca3af"
 TEXT_COLOR = "#111827"
 MUTED_COLOR = "#6b7280"
 LOG_LINE_PTS = 11
+LOG_FONT_PTS = 8
+CHAR_WIDTH = 0.6 * LOG_FONT_PTS      # monospace glyph width in points, for wrapping
 
 
 class Dashboard:
-    """Grid, returns, flag timeline and event log for one trajectory, drawn at a chosen frame.
+    """Grid, level description, returns, flag timeline and event log for one trajectory, drawn
+    at a chosen frame.
 
     Frame 0 is the state right after reset; frame k is the state after step k.
     """
@@ -32,12 +36,15 @@ class Dashboard:
         self.agent_ids = sorted(traj.initial_state.get("agents", {}))
         self.colors = agent_palette(self.agent_ids)
 
-        gs = fig.add_gridspec(3, 2, width_ratios=(1.1, 1), height_ratios=(1.1, 0.6, 1.1),
-                              left=0.03, right=0.98, top=0.88, bottom=0.17, wspace=0.22, hspace=0.55)
-        self.ax_grid = fig.add_subplot(gs[:, 0])
-        self.ax_returns = fig.add_subplot(gs[0, 1])
-        self.ax_timeline = fig.add_subplot(gs[1, 1], sharex=self.ax_returns)
-        self.ax_log = fig.add_subplot(gs[2, 1])
+        outer = fig.add_gridspec(1, 2, width_ratios=(1.1, 1), left=0.03, right=0.98, top=0.91, bottom=0.11,
+                                 wspace=0.2)
+        left = outer[0].subgridspec(2, 1, height_ratios=(1.25, 1), hspace=0.2)
+        right = outer[1].subgridspec(3, 1, height_ratios=(1.1, 0.6, 1.1), hspace=0.55)
+        self.ax_grid = fig.add_subplot(left[0])
+        self.ax_level = fig.add_subplot(left[1])
+        self.ax_returns = fig.add_subplot(right[0])
+        self.ax_timeline = fig.add_subplot(right[1], sharex=self.ax_returns)
+        self.ax_log = fig.add_subplot(right[2])
 
     @property
     def n_frames(self) -> int:
@@ -54,6 +61,7 @@ class Dashboard:
         i = max(0, min(i, self.n_frames - 1))
         self._draw_summary()
         self._draw_grid(i)
+        self._draw_level()
         self._draw_returns(i)
         self._draw_timeline(i)
         self._draw_log(i)
@@ -64,7 +72,6 @@ class Dashboard:
     def _draw_summary(self) -> None:
         tr = self.traj
         self.fig.suptitle(
-            f"{tr.scenario}  ·  {tr.agent}  ·  seed {tr.seed}  ·  {tr.git_hash}\n"
             f"R = {tr.total_R:+.2f}     R* = {tr.total_R_star:+.2f}     "
             f"monitor flags: {len(tr.monitor_flags)}     loophole steps: {len(tr.ground_truth_loophole_steps)}",
             fontsize=10)
@@ -127,19 +134,50 @@ class Dashboard:
         ax.set_title(f"monitor flags (▼) vs R* loophole steps (grey)    time-to-detect: {ttd_text}", fontsize=9)
 
     def _draw_log(self, i: int) -> None:
-        ax = self.ax_log
+        self._draw_lines(self.ax_log, self._log_lines(i))
+
+    def _draw_level(self) -> None:
+        self._draw_lines(self.ax_level, self._level_lines(), wrap=True)
+
+    def _draw_lines(self, ax, lines: list[tuple], wrap: bool = False) -> None:
+        """Write (text, color[, bold]) lines top-down on `ax`, wrapping them to its width when
+        `wrap` is set and cutting them off with "… N more" when they don't fit."""
         ax.clear()
         ax.axis("off")
-        lines = self._log_lines(i)
-        height_pts = ax.get_window_extent().height * 72 / self.fig.dpi
-        max_lines = max(2, int(height_pts // LOG_LINE_PTS))
+        box = ax.get_window_extent()
+        if wrap:
+            width = max(20, int(box.width * 72 / self.fig.dpi // CHAR_WIDTH))
+            wrapped = []
+            for text, color, *bold in lines:
+                indent = " " * (len(text) - len(text.lstrip(" •")))
+                for piece in textwrap.wrap(text, width, subsequent_indent=indent) or [""]:
+                    wrapped.append((piece, color, *bold))
+            lines = wrapped
+        max_lines = max(2, int(box.height * 72 / self.fig.dpi // LOG_LINE_PTS))
         if len(lines) > max_lines:
             hidden = len(lines) - max_lines + 1
             lines = lines[:max_lines - 1] + [(f"… {hidden} more", MUTED_COLOR)]
-        for k, (text, color) in enumerate(lines):
+        for k, (text, color, *bold) in enumerate(lines):
             ax.annotate(text, xy=(0, 1), xycoords="axes fraction", xytext=(0, -k * LOG_LINE_PTS),
                         textcoords="offset points", va="top", ha="left", family="monospace",
-                        fontsize=8, color=color)
+                        fontsize=LOG_FONT_PTS, color=color, fontweight="bold" if bold and bold[0] else "normal")
+
+    def _level_lines(self) -> list[tuple]:
+        level = self.traj.level
+        if not level:
+            return [(f"level: {self.traj.scenario}", TEXT_COLOR, True),
+                    ("No level description recorded. Re-run the experiment to record one.", MUTED_COLOR)]
+        lines = [(f"LEVEL  {level.get('name') or self.traj.scenario}", TEXT_COLOR, True)]
+        if level.get("description"):
+            lines.append((level["description"], TEXT_COLOR))
+        sections = (("RULES", "rules", TEXT_COLOR), ("R: stated reward, what agents optimise", "reward", TEXT_COLOR),
+                    ("R*: hidden intent, agents never see it", "intent", TEXT_COLOR),
+                    ("DESIGNED LOOPHOLES", "loopholes", MUTED_COLOR))
+        for title, key, color in sections:
+            if level.get(key):
+                lines.append((title, TEXT_COLOR, True))
+                lines += [(f" • {item}", color) for item in level[key]]
+        return lines
 
     def _log_lines(self, i: int) -> list[tuple[str, str]]:
         if i == 0:

@@ -1,0 +1,13 @@
+# SARSA (on-policy) vs Q-learning (off-policy) on the same levels, with the greedy baseline.
+#   python -m gridlock.eval.runner experiments/sarsa_vs_q.yaml runs/sarsa_vs_q/results.jsonl
+#   python -m gridlock.eval.report runs/sarsa_vs_q/results.jsonl
+# Needs the levels named below to exist in gridlock/scenarios/levels/.
+scenarios: [vase]
+seeds: [0, 1, 2, 3, 4]
+max_steps: 100
+train_log_dir: runs/sarsa_vs_q        # train_log.jsonl + checkpoints per learner x scenario x seed
+# monitor: {divergence_threshold: 0.5}   # enable once Monitor.observe is implemented
+agents:
+  - {name: q,     type: q_learning, train_episodes: 5000, params: {alpha: 0.1, gamma: 0.99, epsilon_decay: 0.999}}
+  - {name: sarsa, type: sarsa,      train_episodes: 5000, params: {alpha: 0.1, gamma: 0.99, epsilon_decay: 0.999}}
+  - {name: greedy, type: greedy}

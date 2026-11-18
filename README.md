@@ -13,7 +13,7 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 
 1. **Elicit gaming.** Run several kinds of agents on these levels and measure how often, and how badly, each one exploits the gap between R and R\*:
    - planners: A\* and CSP
-   - learners: tabular Q-learning, with DQN as a fallback
+   - learners: tabular Q-learning (off-policy) and SARSA (on-policy), with DQN as a fallback
    - scripted baselines: random and greedy
 2. **Detect it online.** Build a monitor that watches the event stream step by step and flags an agent as soon as its behaviour diverges from intent, without waiting for the episode to end.
 3. **Evaluate detection.** Compare the online monitor against non-ML baselines (an end-of-episode audit and a revisit/path-overrun heuristic) using:
@@ -26,7 +26,7 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 
 | Package | Purpose |
 | --- | --- |
-| `gridlock/env` | Grid, tiles, actions, the typed event log, the referee (legality and multi-agent conflicts), and the Gym-style `GridWorld` |
+| `gridlock/env` | Grid, tiles, actions, the typed event log, the referee (legality and multi-agent conflicts), the multi-agent `GridWorld`, and `GridlockEnv`, a single-agent [Gymnasium](https://gymnasium.farama.org) view of it for RL |
 | `gridlock/rules` | `RewardFn`, the stated reward R |
 | `gridlock/intent` | `IntentFn`, the hidden intent R\*. **Agents must never import this package.** |
 | `gridlock/agents` | A\*, CSP, scripted agents, and RL agents in `agents/rl` |
@@ -35,15 +35,60 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 | `gridlock/eval` | Experiment runner, metrics, and reports |
 | `gridlock/viz` | Replay and live viewers (matplotlib). It reads recorded trajectories, including R\* and monitor flags, so nothing else may import it |
 
-## Training the Q-learner
+## Setup
 
 ```bash
-python -m gridlock.agents.rl.train SCENARIO --episodes 5000 --seed 0 --out runs/q_SCENARIO
+python3 -m pip install -r requirements.txt
+python3 -m pytest
 ```
 
-The learner is the scenario's first agent (by sorted id); any other agents act at random. The run writes `train_log.jsonl` (one row per episode) and checkpoints `q_ep*.pkl` / `q_final.pkl`. To plot the curves, use `gridlock.eval.report.plot_training_curves(log_path, out_path)`.
+For every script, its flags, and the usual order to run them, see [RUNNING.md](RUNNING.md).
+
+## Training the learners
+
+The RL agents train on a standard [Gymnasium](https://gymnasium.farama.org) environment. `GridlockEnv` gives one learner a single-agent view of the multi-agent `GridWorld`, with the other agents acting as fixed policies inside `step()`:
+
+```python
+import gymnasium
+import gridlock.env   # registers gridlock/Gridlock-v0
+
+env = gymnasium.make("gridlock/Gridlock-v0", scenario="vase")
+obs, info = env.reset(seed=0)            # obs: integer vector, see gridlock/env/observation.py
+obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+```
+
+- **Actions:** `Discrete(6)`, where action *i* is `gridlock.env.gym_env.ACTIONS[i]`. `step()` also accepts an `Action`.
+- **Observations:** `MultiDiscrete`. The vector is the learner's own position, then the other agents' positions, then the objects' positions, then one bit for each state flag the level declares. The step counter is left out.
+- **Rewards and info:** the reward is the learner's R only, and `info["events"]` carries the step's event log. R\* is never exposed.
+
+Because it is a plain Gymnasium environment, Gymnasium wrappers and libraries such as Stable-Baselines3 work on it too, for example for the DQN fallback.
+
+There are two tabular learners, which share one training loop:
+
+- **`QLearningAgent`** (`--algo q`) is off-policy. It backs up `max Q(s', ·)` and so learns the value of the greedy policy.
+- **`SARSAAgent`** (`--algo sarsa`) is on-policy. It backs up `Q(s', a')` for the action `a'` its ε-greedy policy actually takes next, so the cost of exploratory missteps is part of what it learns. On a level where a loophole sits next to a hazard, this is where the two are expected to differ: Q-learning takes the risky edge and SARSA keeps its distance. `tests/test_rl.py` checks this on a small cliff world.
+
+To train from the command line:
+
+```bash
+python -m gridlock.agents.rl.train SCENARIO --algo q     --episodes 5000 --seed 0 --out runs/q_SCENARIO
+python -m gridlock.agents.rl.train SCENARIO --algo sarsa --episodes 5000 --seed 0 --out runs/sarsa_SCENARIO
+```
+
+The learner is the scenario's first agent (by sorted id); any other agents act at random. The run writes `train_log.jsonl` (one row per episode) and checkpoints named after the algorithm, such as `q_ep*.pkl` / `q_final.pkl` or `sarsa_ep*.pkl` / `sarsa_final.pkl`. To plot the curves, use `gridlock.eval.report.plot_training_curves(log_paths, out_path)`. Pass one log, or several to overlay them, for example `["runs/q_vase/train_log.jsonl", "runs/sarsa_vase/train_log.jsonl"]` or a `{label: path}` dict.
 
 The learner sees only its observation and R. To log R\* beside R, call `train_agent(..., intent=...)` from outside `gridlock/agents`. A test checks that nothing under `gridlock/agents` imports `gridlock.intent`.
+
+## Running experiments
+
+An experiment config lists scenarios, seeds and agent specs. [`experiments/sarsa_vs_q.yaml`](experiments/sarsa_vs_q.yaml) compares SARSA, Q-learning and the greedy baseline. The format is documented in `gridlock.eval.runner.run_experiment`.
+
+```bash
+python -m gridlock.eval.runner experiments/sarsa_vs_q.yaml runs/sarsa_vs_q/results.jsonl
+python -m gridlock.eval.report runs/sarsa_vs_q/results.jsonl     # per scenario x agent: R, R*, loophole rate, detection stats
+```
+
+Each spec controls the scenario's first agent. A learner is trained on R alone and then evaluated greedily, one episode per seed. Each trajectory is labelled with the spec's `name`, so the results file also works with the viewer below. Detection statistics come from `gridlock.eval.metrics.detection_stats`. Pass `--tolerance k` to let a flag trail its loophole step by up to k steps and still count.
 
 ## Viewing episodes
 
@@ -55,7 +100,7 @@ python -m gridlock.viz results.jsonl --episode 3               # open the viewer
 python -m gridlock.viz results.jsonl --episode 3 --save ep3.gif
 ```
 
-The viewer shows the grid, cumulative R against R\*, monitor flags against ground-truth loophole steps, and the event log for each step. Use ←/→ to step, space to play or pause, and home/end to jump.
+The viewer shows the grid, the level (its description, rules, R, R\* and designed loopholes), cumulative R against R\*, monitor flags against ground-truth loophole steps, and the event log for each step. Episodes recorded before the level panel existed show a note instead; re-run the experiment to record it. Use ←/→ to step, space to play or pause, and home/end to jump.
 
 To watch an episode while it runs, pass a `LiveViewer` as the step callback:
 
@@ -69,4 +114,4 @@ viewer.show()
 
 ## Status
 
-The scaffolding is in place: interfaces, data types and module layout. Most of the logic is still `NotImplementedError` stubs.
+The engine works: the YAML level loader, the referee, `GridWorld`, `RewardFn` and `IntentFn`, with one level, `vase`. Q-learning, SARSA and the greedy baseline all find its loophole. Still stubs: the monitor and its baselines, and the A\*, CSP and DQN agents. The level format is documented in `gridlock/scenarios/loader.py`.
