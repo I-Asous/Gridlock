@@ -2,7 +2,7 @@
 
 Every command-line script in the project, with its flags and what it writes, plus the usual order to run them in. For what the project is and how the packages fit together, see [README.md](README.md).
 
-> **Current state.** The level loader (`load_scenario`), `GridWorld.reset`/`step`, `RewardFn` and `IntentFn` are still stubs, and `gridlock/scenarios/levels/` has no level files. Until they exist, any command that takes a scenario name (training, experiments) stops with `NotImplementedError`. The test suite works now, because it uses fake worlds. The report and viewer scripts work on any results file in the right format.
+> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. One level exists so far, `vase` (`gridlock/scenarios/levels/vase.yaml`). The monitor and the A\* and CSP agents are still stubs, so leave `monitor:` out of experiment configs for now.
 
 ## Setup
 
@@ -19,8 +19,8 @@ Run every command from the repository root so `gridlock` can be imported.
 | Command                                | What it does                                                | Works today?                |
 | -------------------------------------- | ----------------------------------------------------------- | --------------------------- |
 | `python3 -m pytest`                  | Runs the test suite                                         | Yes                         |
-| `python -m gridlock.agents.rl.train` | Trains one Q-learning or SARSA agent on one scenario        | Needs levels and the engine |
-| `python -m gridlock.eval.runner`     | Runs a full experiment config: scenarios × agents × seeds | Needs levels and the engine |
+| `python -m gridlock.agents.rl.train` | Trains one Q-learning or SARSA agent on one scenario        | Yes (level: `vase`)         |
+| `python -m gridlock.eval.runner`     | Runs a full experiment config: scenarios × agents × seeds | Yes (level: `vase`)         |
 | `python -m gridlock.eval.report`     | Prints a summary table from a results file                  | Yes                         |
 | `python -m gridlock.viz`             | Replays recorded episodes, or saves them as PNG/GIF         | Yes                         |
 
@@ -152,7 +152,7 @@ python -m gridlock.viz RESULTS.jsonl -e 3 --save ep3.gif      # save the whole e
 python -m gridlock.viz RESULTS.jsonl -e 3 --save ep3.png --frame 10   # save one frame
 ```
 
-The viewer shows the grid, cumulative R against R\*, monitor flags against the ground-truth loophole steps, and each step's events. Use ←/→ to step, space to play or pause, and Home/End to jump to the start or end.
+The viewer shows the grid, the level (its description, rules, R, R\* and designed loopholes), cumulative R against R\*, monitor flags against the ground-truth loophole steps, and each step's events. Use ←/→ to step, space to play or pause, and Home/End to jump to the start or end.
 
 To watch an episode while it runs instead of replaying it:
 
@@ -182,7 +182,7 @@ The reward is R only. `info["events"]` carries the step's event log. R\* is neve
 
 ## Typical workflow
 
-Once levels and the engine exist:
+With the `vase` level:
 
 ```bash
 python3 -m pytest                                                              # 1. check everything passes

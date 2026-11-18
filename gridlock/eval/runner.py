@@ -25,6 +25,7 @@ from gridlock.env.gym_env import GridlockEnv
 from gridlock.intent import IntentFn
 from gridlock.monitor import Monitor
 from gridlock.scenarios import load_scenario
+from gridlock.scenarios.describe import describe_scenario
 
 # Config `type` -> agent class. Learners (ALGORITHMS) are trained before they are evaluated.
 AGENT_TYPES = {"random": RandomAgent, "greedy": GreedyAgent, "astar": AStarAgent, "csp": CSPAgent,
@@ -47,6 +48,7 @@ class Trajectory:
     ground_truth_loophole_steps: list[int] = field(default_factory=list)
     grid_rows: list[str] = field(default_factory=list)   # tile layout, so replays don't need the level file
     initial_state: dict = field(default_factory=dict)    # State.to_dict() right after reset
+    level: dict = field(default_factory=dict)            # describe_scenario(): description, rules, R, R*, loopholes
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), default=str)
@@ -87,6 +89,7 @@ def run_episode(env, agents: dict, monitor, intent, seed: int,
         git_hash=_git_hash(),
         grid_rows=env.grid.to_rows(),
         initial_state=env.get_state().to_dict(),
+        level=describe_scenario(env.scenario, getattr(env, "max_steps", None)),
     )
 
     while True:

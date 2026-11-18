@@ -100,7 +100,7 @@ python -m gridlock.viz results.jsonl --episode 3               # open the viewer
 python -m gridlock.viz results.jsonl --episode 3 --save ep3.gif
 ```
 
-The viewer shows the grid, cumulative R against R\*, monitor flags against ground-truth loophole steps, and the event log for each step. Use ←/→ to step, space to play or pause, and home/end to jump.
+The viewer shows the grid, the level (its description, rules, R, R\* and designed loopholes), cumulative R against R\*, monitor flags against ground-truth loophole steps, and the event log for each step. Episodes recorded before the level panel existed show a note instead; re-run the experiment to record it. Use ←/→ to step, space to play or pause, and home/end to jump.
 
 To watch an episode while it runs, pass a `LiveViewer` as the step callback:
 
@@ -114,4 +114,4 @@ viewer.show()
 
 ## Status
 
-The scaffolding is in place: interfaces, data types and module layout. Most of the logic is still `NotImplementedError` stubs.
+The engine works: the YAML level loader, the referee, `GridWorld`, `RewardFn` and `IntentFn`, with one level, `vase`. Q-learning, SARSA and the greedy baseline all find its loophole. Still stubs: the monitor and its baselines, and the A\*, CSP and DQN agents. The level format is documented in `gridlock/scenarios/loader.py`.

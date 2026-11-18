@@ -14,7 +14,7 @@ class ReplayViewer:
     """Interactive viewer for one Trajectory. Keys: ←/→ step, space play/pause, home/end jump."""
 
     def __init__(self, traj, interval_ms: int = 300):
-        self.fig = plt.figure(figsize=(13, 7.5))
+        self.fig = plt.figure(figsize=(14, 9.5))
         self.dash = Dashboard(traj, self.fig)
         self.last = self.dash.n_frames - 1
         self.frame = 0

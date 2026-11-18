@@ -25,7 +25,7 @@ class LiveViewer:
     def __call__(self, traj, step: dict) -> None:
         if self.fig is None:
             plt.ion()
-            self.fig = plt.figure(figsize=(13, 7))
+            self.fig = plt.figure(figsize=(14, 9.5))
         elif not plt.fignum_exists(self.fig.number):
             return
         if self.dash is None or self.dash.traj is not traj:
