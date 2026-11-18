@@ -13,8 +13,10 @@ The rules every agent plays by (a loophole is anything these allow that the inte
   (BROKE) and is removed, with the agent staying where it was; anything else is a BUMPED.
 - INTERACT on a switch tile toggles that switch's flag (TOGGLED, payload {"on": new value}).
   INTERACT anywhere else does nothing.
-- Entering a goal tile ends the agent's episode (REACHED_GOAL); entering a checkpoint tile emits
-  CHECKPOINT every time.
+- Entering a goal tile ends the agent's episode (REACHED_GOAL). Entering a checkpoint tile emits
+  CHECKPOINT every time, with payload {"first": True} only on that agent's first visit to it.
+- Entering a trap tile emits TRAPPED and sends the agent back to its start cell (payload {"to": start}).
+  If another agent ends the step on that start cell, the trapped agent stays on the trap instead.
 """
 
 from collections import defaultdict
@@ -38,10 +40,11 @@ def _is_move(action: Action) -> bool:
 
 class Referee:
     def __init__(self, grid: Grid, object_props: Optional[dict[str, dict]] = None,
-                 switches: Optional[dict[Pos, str]] = None):
+                 switches: Optional[dict[Pos, str]] = None, starts: Optional[dict[str, Pos]] = None):
         self.grid = grid
         self.object_props = dict(object_props or {})
         self.switches = dict(switches or {})
+        self.starts = {aid: tuple(pos) for aid, pos in (starts or {}).items()}
 
     def legal_actions(self, state, agent_id: str) -> list[Action]:
         """Actions that can do something: STAY, moves that don't walk into a wall (pushing or
@@ -144,7 +147,8 @@ class Referee:
         for aid, oid in breaks.items():
             events.append(Event(t, aid, EventKind.BROKE, tuple(objects[oid]), target=oid))
             new_objects[oid] = None
-        flags, done = set(state.flags), set(state.done)
+        flags, done, visited = set(state.flags), set(state.done), set(state.visited)
+        trapped = []
         for aid in active:
             if dest[aid] != pos[aid]:
                 events.append(Event(t, aid, EventKind.MOVED, dest[aid]))
@@ -158,18 +162,29 @@ class Referee:
                     done.add(aid)
                     events.append(Event(t, aid, EventKind.REACHED_GOAL, dest[aid]))
                 elif tile is Tile.CHECKPOINT:
-                    events.append(Event(t, aid, EventKind.CHECKPOINT, dest[aid]))
+                    first = (aid, dest[aid]) not in visited
+                    visited.add((aid, dest[aid]))
+                    events.append(Event(t, aid, EventKind.CHECKPOINT, dest[aid], payload={"first": first}))
+                elif tile is Tile.TRAP:
+                    trapped.append(aid)
             elif actions.get(aid) is Action.INTERACT and pos[aid] in self.switches:
                 flag = self.switches[pos[aid]]
                 on = flag not in flags
                 (flags.add if on else flags.discard)(flag)
                 events.append(Event(t, aid, EventKind.TOGGLED, pos[aid], target=flag, payload={"on": on}))
 
+        for aid in trapped:
+            start = self.starts.get(aid, pos[aid])
+            taken = any(dest[other] == start for other in active if other != aid)
+            events.append(Event(t, aid, EventKind.TRAPPED, dest[aid], payload={"to": list(dest[aid] if taken else start)}))
+            if not taken:
+                dest[aid] = start
+
         events.sort(key=lambda e: e.agent_id)        # stable: each agent's events stay in order
         next_state = replace(state, t=t,
                              agents=tuple((aid, dest[aid]) for aid, _ in state.agents),
                              objects=tuple((oid, new_objects[oid]) for oid, _ in state.objects),
-                             flags=frozenset(flags), done=frozenset(done))
+                             flags=frozenset(flags), done=frozenset(done), visited=frozenset(visited))
         return next_state, events
 
     def _object_can_enter(self, cell: Pos, object_at: dict[Pos, str], pos: dict[str, Pos],

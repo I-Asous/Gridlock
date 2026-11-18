@@ -17,6 +17,7 @@ class EventKind(Enum):
     BLOCKED = auto()         # agent occupies a cell another agent wanted
     CHECKPOINT = auto()
     REACHED_GOAL = auto()
+    TRAPPED = auto()         # stepped on a trap and was sent back to the start
 
 
 @dataclass(frozen=True)

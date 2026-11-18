@@ -216,3 +216,68 @@ def test_cli_list_and_save(traj, tmp_path, capsys):
     assert "fake" in capsys.readouterr().out
     main([str(path), "--save", str(tmp_path / "out.png"), "--frame", "1"])
     assert (tmp_path / "out.png").exists()
+
+
+def _relabel(traj, agent, seed=7, scenario="fake"):
+    copy = Trajectory.from_dict(json.loads(traj.to_json()))
+    copy.agent, copy.seed, copy.scenario = agent, seed, scenario
+    return copy
+
+
+def test_pick_comparison_takes_one_episode_per_agent(traj):
+    from gridlock.viz.__main__ import pick_comparison
+
+    trajs = [_relabel(traj, "q", 0), _relabel(traj, "q", 1), _relabel(traj, "sarsa", 0),
+             _relabel(traj, "q", 0), _relabel(traj, "greedy", 0, scenario="other")]
+    assert [(t.agent, t.seed) for t in pick_comparison(trajs)] == [("q", 0), ("sarsa", 0)]
+    assert [(t.agent, t.seed) for t in pick_comparison(trajs, seed=1)] == [("q", 1)]
+    assert [t.agent for t in pick_comparison(trajs, scenario="other")] == ["greedy"]
+    with pytest.raises(ValueError, match="scenarios in the file"):
+        pick_comparison(trajs, scenario="missing")
+    with pytest.raises(ValueError, match="seeds"):
+        pick_comparison(trajs, seed=9)
+
+
+def test_comparison_viewer_steps_every_agent_together(traj, tmp_path):
+    from gridlock.viz import ComparisonViewer
+
+    short = _relabel(traj, "short")
+    short.steps = short.steps[:2]                                    # ends before the others
+    viewer = ComparisonViewer([_relabel(traj, "q"), short])
+    dash = viewer.dash
+    assert viewer.last == 4 and dash.studied == ["a", "a"]
+    viewer.go(3)
+    assert [dash._status(k, 3) for k in range(2)] == ["t = 3", "cut off at t = 2"]
+    pills = [text.get_text() for text in dash.status_texts]
+    assert pills == ["RUNNING  t = 3", "CUT OFF  t = 2"]
+    assert dash.score_texts[0].get_text().startswith("R ")
+    assert dash._log_lines(1, 3)[0][0] == "episode over"
+    viewer.go(0)
+    assert [text.get_text() for text in dash.status_texts] == ["START", "START"]
+    assert dash._pill("reached the goal at t = 8") == ("⚑ GOAL  t = 8", dash._pill("reached the goal at t = 1")[1])
+    viewer.save(tmp_path / "cmp.png")
+    viewer.save(tmp_path / "cmp.gif")
+    assert (tmp_path / "cmp.png").stat().st_size > 0 and (tmp_path / "cmp.gif").stat().st_size > 0
+
+
+def test_cli_compares_all_agents_by_default(traj, tmp_path, capsys):
+    from gridlock.viz.__main__ import main
+
+    path = tmp_path / "results.jsonl"
+    path.write_text("".join(_relabel(traj, name).to_json() + "\n" for name in ("q", "sarsa", "greedy")))
+    main([str(path), "--save", str(tmp_path / "all.png")])
+    assert "fake, seed 7: q, sarsa, greedy" in capsys.readouterr().out
+    main([str(path), "-e", "1", "--compare", "--save", str(tmp_path / "all2.png")])
+    main([str(path), "-e", "1", "--save", str(tmp_path / "one.png")])          # single-episode view still works
+    assert all((tmp_path / name).exists() for name in ("all.png", "all2.png", "one.png"))
+
+
+def test_viewers_fit_a_laptop_screen_and_refit_on_resize(traj):
+    from gridlock.viz import ComparisonViewer, ReplayViewer
+
+    for viewer in (ReplayViewer(traj), ComparisonViewer([_relabel(traj, "q"), _relabel(traj, "sarsa")])):
+        assert tuple(viewer.fig.get_size_inches()) == (14.0, 8.0)
+        viewer.go(2)
+        viewer.fig.set_size_inches(11, 6.5)
+        viewer._on_resize(None)                                   # redraws at the new size, same frame
+        assert viewer.frame == 2 and viewer._size == (11.0, 6.5)

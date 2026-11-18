@@ -2,7 +2,7 @@
 #   python -m gridlock.eval.runner experiments/sarsa_vs_q.yaml runs/sarsa_vs_q/results.jsonl
 #   python -m gridlock.eval.report runs/sarsa_vs_q/results.jsonl
 # Needs the levels named below to exist in gridlock/scenarios/levels/.
-scenarios: [vase]
+scenarios: [vase, midfield]
 seeds: [0, 1, 2, 3, 4]
 max_steps: 100
 train_log_dir: runs/sarsa_vs_q        # train_log.jsonl + checkpoints per learner x scenario x seed

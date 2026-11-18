@@ -18,19 +18,22 @@ class State:
     objects: tuple[tuple[str, Any], ...]      # object id -> position / status
     flags: frozenset[str] = field(default_factory=frozenset)  # e.g. "sensor_off"
     done: frozenset[str] = field(default_factory=frozenset)   # agents that have reached the goal
+    visited: frozenset[tuple[str, Pos]] = field(default_factory=frozenset)   # (agent, checkpoint) entered so far
 
     def to_dict(self) -> dict:
         """JSON-friendly snapshot, recorded every step so runs can be replayed without re-simulating."""
         return {"t": self.t, "agents": {aid: list(pos) for aid, pos in self.agents},
                 "objects": {oid: list(value) if isinstance(value, tuple) else value for oid, value in self.objects},
-                "flags": sorted(self.flags), "done": sorted(self.done)}
+                "flags": sorted(self.flags), "done": sorted(self.done),
+                "visited": sorted([aid, *pos] for aid, pos in self.visited)}
 
 
 class GridWorld:
     def __init__(self, scenario, max_steps: int = 100):
         self.scenario = scenario
         self.grid: Grid = scenario.grid
-        self.referee = Referee(self.grid, getattr(scenario, "object_props", None), getattr(scenario, "switches", None))
+        self.referee = Referee(self.grid, getattr(scenario, "object_props", None), getattr(scenario, "switches", None),
+                               starts=scenario.agents)
         self.reward_fn = scenario.reward_fn
         self.max_steps = max_steps
         self.encoder = ObservationEncoder.for_scenario(scenario)
