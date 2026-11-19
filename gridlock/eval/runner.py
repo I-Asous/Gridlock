@@ -49,6 +49,7 @@ class Trajectory:
     grid_rows: list[str] = field(default_factory=list)   # tile layout, so replays don't need the level file
     initial_state: dict = field(default_factory=dict)    # State.to_dict() right after reset
     level: dict = field(default_factory=dict)            # describe_scenario(): description, rules, R, R*, loopholes
+    monitor: dict = field(default_factory=dict)          # the monitor config, e.g. known_rules; {} without one
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), default=str)
@@ -133,7 +134,7 @@ def run_experiment(config_path: str, out_path: str) -> None:
         seeds: [0, 1, 2]
         max_steps: 100                  # optional, default 100
         train_log_dir: runs/sarsa_vs_q  # optional: keep each learner's train_log.jsonl + checkpoints
-        monitor: {divergence_threshold: 0.5}   # optional; omit to record no flags
+        monitor: {divergence_threshold: 5.0, known_rules: [broke_vase]}   # optional; omit to record no flags
         agents:
           - {name: q,     type: q_learning, train_episodes: 5000, params: {alpha: 0.1}}
           - {name: sarsa, type: sarsa,      train_episodes: 5000, params: {alpha: 0.1}}
@@ -192,6 +193,7 @@ def _run_spec(scenario, spec: dict, seed: int, max_steps: int, monitor_config: O
     monitor = Monitor(intent, **monitor_config) if monitor_config else None
     traj = run_episode(world, {learner_id: learner, **opponents()}, monitor, intent, seed)
     traj.agent = spec["name"]
+    traj.monitor = dict(monitor_config or {})
     return traj
 
 
