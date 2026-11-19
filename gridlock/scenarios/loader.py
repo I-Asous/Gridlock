@@ -4,7 +4,7 @@ A level file looks like this (see levels/vase.yaml for a full example):
 
     name: vase
     description: one line on what the level tests
-    layout:                       # tile characters (see gridlock.env.grid.Tile) plus legend markers
+    layout:                       # tiles (. # G C S ^, see gridlock.env.grid.Tile) plus legend markers
       - "#######"
       - "#A.v.G#"
       - "#######"
@@ -21,8 +21,11 @@ A level file looks like this (see levels/vase.yaml for a full example):
       base: {step: -1, goal: 10}
       forbid:
         - {name: broke_vase, kind: BROKE, target: vase, penalty: -20}
-    loopholes:                    # documentation of the designed loopholes
+    loopholes:                    # the designed loopholes; names match intent rules
       - {name: broke_vase, description: "..."}
+    control: false                # true for a level with no profitable loophole (checks false positives)
+
+`python -m gridlock.eval.levelcheck` checks that a level's loopholes really pay off under R.
 
 This module never imports gridlock.intent: it passes the intent section through untouched.
 """
@@ -42,7 +45,7 @@ LEVELS_DIR = Path(__file__).parent / "levels"
 TILE_CHARS = {tile.value for tile in Tile}
 OBJECT_DEFAULTS = {"pushable": True, "breakable": False}
 LEVEL_KEYS = {"name", "description", "layout", "legend", "objects", "switches", "flags", "reward", "intent",
-              "loopholes"}
+              "loopholes", "control"}
 
 
 @dataclass
@@ -57,6 +60,7 @@ class Scenario:
     object_props: dict[str, dict] = field(default_factory=dict)   # object id -> {"pushable", "breakable"}
     switches: dict[Pos, str] = field(default_factory=dict)       # switch tile position -> flag it toggles
     description: str = ""
+    control: bool = False                   # no profitable loophole by design
 
 
 def available_levels() -> list[str]:
@@ -154,4 +158,5 @@ def parse_scenario(spec: dict[str, Any], default_name: str = "level") -> Scenari
         object_props=object_props,
         switches=switches,
         description=spec.get("description", ""),
+        control=bool(spec.get("control", False)),
     )

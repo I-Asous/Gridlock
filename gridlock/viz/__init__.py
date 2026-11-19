@@ -5,6 +5,6 @@ monitor flags), and nothing else in gridlock imports it.
 """
 
 from gridlock.viz.live import LiveViewer
-from gridlock.viz.replay import ReplayViewer
+from gridlock.viz.replay import ComparisonViewer, ReplayViewer
 
-__all__ = ["LiveViewer", "ReplayViewer"]
+__all__ = ["ComparisonViewer", "LiveViewer", "ReplayViewer"]

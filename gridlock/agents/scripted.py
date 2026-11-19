@@ -19,9 +19,10 @@ class RandomAgent(Agent):
 
 
 class GreedyAgent(Agent):
-    """Moves toward the goal along the shortest walkable path, ignoring others.
+    """Moves toward the goal along the shortest walkable path that avoids traps, ignoring others.
 
-    reset() measures every cell's walking distance to the nearest goal tile; act() then steps
+    reset() measures every cell's walking distance to the nearest goal tile, routing around trap
+    tiles; act() then steps
     to a neighbouring cell that is one step closer, and stays put once on a goal. Objects and
     other agents are ignored, so it walks straight through a vase in its path. The observation
     must start with the agent's own (x, y), as GridWorld.observe provides.
@@ -32,7 +33,7 @@ class GreedyAgent(Agent):
         self.distance: dict[Pos, int] = {}
 
     def reset(self, env) -> None:
-        self.distance = env.grid.distances_from(env.grid.cells(Tile.GOAL))
+        self.distance = env.grid.distances_from(env.grid.cells(Tile.GOAL), avoid=(Tile.TRAP,))
 
     def act(self, obs) -> Action:
         x, y = int(obs[0]), int(obs[1])

@@ -190,7 +190,7 @@ def test_simulate_is_pure_and_accepts_indices():
 def test_state_snapshot_is_json_friendly():
     w = world(["Av."], {"A": {"agent": "a"}, "v": {"object": "box"}})
     assert w.get_state().to_dict() == {"t": 0, "agents": {"a": [0, 0]}, "objects": {"box": [1, 0]},
-                                       "flags": [], "done": []}
+                                       "flags": [], "done": [], "visited": []}
 
 
 def test_step_before_reset_fails():
@@ -315,7 +315,83 @@ def test_viewer_shows_the_recorded_level(tmp_path):
     assert traj.level["name"] == "vase"
 
     shown = "\n".join(text for text, *_ in ReplayViewer(traj).dash._level_lines())
-    assert "LEVEL  vase" in shown and "broke_vase: -20 for BROKE vase" in shown and "RULES" in shown
+    assert shown.startswith("A vase sits") and "broke_vase: -20 for BROKE vase" in shown and "RULES" in shown
 
     traj.level = {}                                                   # results recorded before levels were
     assert "No level description" in ReplayViewer(traj).dash._level_lines()[1][0]
+
+
+# --- traps and bonus points --------------------------------------------------------------------
+
+def test_trap_sends_the_agent_back_to_its_start():
+    w = world(["A.^.G"], {"A": {"agent": "a"}}, reward={"step": -1, "trapped": -10})
+    w.step({"a": R})
+    _, rewards, _, _, info = w.step({"a": R})
+    assert positions(w) == {"a": (0, 0)} and rewards == {"a": -11.0}
+    assert kinds(info["events"], "a") == [(EventKind.MOVED, None), (EventKind.TRAPPED, None)]
+    assert info["events"][1].pos == (2, 0) and info["events"][1].payload == {"to": [0, 0]}
+
+
+def test_trapped_agent_waits_on_the_trap_when_its_start_is_taken():
+    w = world(["A^", "B."], TWO)
+    _, _, _, _, info = w.step({"a": R, "b": U})                     # b steps onto a's start as a falls in
+    assert positions(w) == {"a": (1, 0), "b": (0, 0)}
+    trapped = [e for e in info["events"] if e.kind is EventKind.TRAPPED]
+    assert len(trapped) == 1 and trapped[0].payload == {"to": [1, 0]}   # stayed on the trap
+    w.step({"a": D, "b": STAY})                                      # walking off a trap is normal
+    assert positions(w)["a"] == (1, 1)
+
+
+def test_checkpoint_events_mark_the_first_visit():
+    w = world(["AC."], {"A": {"agent": "a"}})
+    firsts = []
+    for action in (R, R, L, R, L):
+        _, _, _, _, info = w.step({"a": action})
+        firsts += [e.payload["first"] for e in info["events"] if e.kind is EventKind.CHECKPOINT]
+    assert firsts == [True, False, False]                            # entered three times, first only once
+    assert w.get_state().visited == {("a", (1, 0))}
+    assert w.get_state().to_dict()["visited"] == [["a", 1, 0]]
+
+
+def test_intent_can_forbid_only_repeat_visits():
+    w = world(["AC."], {"A": {"agent": "a"}})
+    intent = IntentFn({"base": {"checkpoint": 3}, "forbid": [
+        {"name": "farmed", "kind": "CHECKPOINT", "payload": {"first": False}, "penalty": -6}]})
+    scores = []
+    for action in (R, R, L):
+        _, _, _, _, info = w.step({"a": action})
+        scores.append(intent.step_score(w.get_state(), info["events"], "a"))
+    assert scores == [3.0, 0.0, -3.0]
+
+
+def test_greedy_routes_around_traps():
+    from gridlock.agents.scripted import GreedyAgent
+    w = world(["A^G", "..."], {"A": {"agent": "a"}})
+    agent = GreedyAgent("a")
+    agent.reset(w)
+    obs = w.observe("a")
+    path = []
+    for _ in range(4):
+        observations, _, terminated, _, _ = w.step({"a": agent.act(obs)})
+        obs = observations["a"]
+        path.append(positions(w)["a"])
+        if terminated["a"]:
+            break
+    assert path == [(0, 1), (1, 1), (2, 1), (2, 0)]
+
+
+def test_describe_mentions_traps_and_bonus_points():
+    from gridlock.scenarios.describe import describe_scenario
+    rules = describe_scenario(load_scenario("midfield"))["rules"]
+    assert any(rule.startswith("^: a trap") for rule in rules)
+    assert any(rule.startswith("C: a bonus point") for rule in rules)
+
+
+def test_midfield_routes():
+    """Greedy walks the trap ledge cleanly; the level checker finds both loopholes' route lengths."""
+    from gridlock.agents.scripted import GreedyAgent
+    from gridlock.eval.runner import run_episode
+    scenario = load_scenario("midfield")
+    assert scenario.agents == {"a0": (4, 5)} and scenario.grid.width == scenario.grid.height == 10
+    traj = run_episode(GridWorld(scenario), {"a0": GreedyAgent("a0")}, None, IntentFn(scenario.intent_config), 0)
+    assert len(traj.steps) == 8 and traj.total_R == 12.0 and traj.total_R_star == 12.0

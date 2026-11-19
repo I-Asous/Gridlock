@@ -31,7 +31,7 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 | `gridlock/intent` | `IntentFn`, the hidden intent R\*. **Agents must never import this package.** |
 | `gridlock/agents` | A\*, CSP, scripted agents, and RL agents in `agents/rl` |
 | `gridlock/monitor` | The online R\*-aware monitor and the baseline monitors |
-| `gridlock/scenarios` | YAML level loader and levels with designed loopholes |
+| `gridlock/scenarios` | YAML level loader and levels with designed loopholes. `python -m gridlock.eval.levelcheck` checks each level's loophole really pays off under R |
 | `gridlock/eval` | Experiment runner, metrics, and reports |
 | `gridlock/viz` | Replay and live viewers (matplotlib). It reads recorded trajectories, including R\* and monitor flags, so nothing else may import it |
 
@@ -96,11 +96,13 @@ Each spec controls the scenario's first agent. A learner is trained on R alone a
 
 ```bash
 python -m gridlock.viz results.jsonl --list                    # list the episodes in the file
-python -m gridlock.viz results.jsonl --episode 3               # open the viewer
-python -m gridlock.viz results.jsonl --episode 3 --save ep3.gif
+python -m gridlock.viz results.jsonl                           # every agent side by side on the first level and seed
+python -m gridlock.viz results.jsonl --scenario vase --seed 2  # every agent on that level and seed
+python -m gridlock.viz results.jsonl --episode 3               # one episode in detail
+python -m gridlock.viz results.jsonl --save compare.gif        # save instead of opening a window
 ```
 
-The viewer shows the grid, the level (its description, rules, R, R\* and designed loopholes), cumulative R against R\*, monitor flags against ground-truth loophole steps, and the event log for each step. Episodes recorded before the level panel existed show a note instead; re-run the experiment to record it. Use ←/→ to step, space to play or pause, and home/end to jump.
+The default view compares every agent on one level and seed: one board per agent, stepped together, each showing the agent's path so far, where it violated R\* (✕), and whether it reached the goal or was cut off. Below the boards are every agent's cumulative R and R\* and the level description. With `--episode`, the viewer instead shows one episode in detail: the grid, the level (its description, rules, R, R\* and designed loopholes), cumulative R against R\*, monitor flags against ground-truth loophole steps, and the event log for each step. Episodes recorded before the level panel existed show a note instead; re-run the experiment to record it. Use ←/→ to step, space to play or pause, and home/end to jump.
 
 To watch an episode while it runs, pass a `LiveViewer` as the step callback:
 
@@ -114,4 +116,4 @@ viewer.show()
 
 ## Status
 
-The engine works: the YAML level loader, the referee, `GridWorld`, `RewardFn` and `IntentFn`, with one level, `vase`. Q-learning, SARSA and the greedy baseline all find its loophole. Still stubs: the monitor and its baselines, and the A\*, CSP and DQN agents. The level format is documented in `gridlock/scenarios/loader.py`.
+The engine works: the YAML level loader, the referee, `GridWorld`, `RewardFn` and `IntentFn`, with two levels. On `vase`, Q-learning, SARSA and the greedy baseline all break the vase. On `midfield` (10×10, start in the middle, traps, far-off bonus points) they split three ways: Q-learning farms a bonus point forever, SARSA avoids the trap ledge and breaks the vase in the safe corridor, and greedy walks the ledge cleanly. Still stubs: the monitor and its baselines, and the A\*, CSP and DQN agents. The level format is documented in `gridlock/scenarios/loader.py`.

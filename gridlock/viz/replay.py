@@ -7,33 +7,58 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.widgets import Button, Slider
 
-from gridlock.viz.panels import MUTED_COLOR, Dashboard
+from gridlock.viz import theme
+from gridlock.viz.compare import ComparisonDashboard, figure_size
+from gridlock.viz.panels import Dashboard
+from gridlock.viz.theme import ACCENT, ACCENT_DARK, CARD_EDGE, MUTED, Layout, themed
 
 
 class ReplayViewer:
     """Interactive viewer for one Trajectory. Keys: ←/→ step, space play/pause, home/end jump."""
 
     def __init__(self, traj, interval_ms: int = 300):
-        self.fig = plt.figure(figsize=(14, 9.5))
-        self.dash = Dashboard(traj, self.fig)
-        self.last = self.dash.n_frames - 1
-        self.frame = 0
-        self.playing = False
+        self._setup(lambda fig: Dashboard(traj, fig), (14, 8), interval_ms)
 
-        slider_ax = self.fig.add_axes((0.08, 0.045, 0.6, 0.03))
-        button_ax = self.fig.add_axes((0.74, 0.035, 0.07, 0.05))
-        self.slider = Slider(slider_ax, "frame", 0, max(self.last, 1), valinit=0, valstep=1)
-        self.slider.on_changed(self._on_slider)
-        self.button = Button(button_ax, "Play")
-        self.button.on_clicked(lambda _event: self.toggle())
-        hint = self.fig.text(0.08, 0.012, "← → step    space play/pause    home/end jump",
-                             fontsize=8, color=MUTED_COLOR)
-        self._controls = (slider_ax, button_ax, hint)
+    def _setup(self, make_dashboard, figsize, interval_ms: int) -> None:
+        with themed():
+            self.fig = plt.figure(figsize=figsize)
+            if self.fig.canvas.manager is not None:
+                self.fig.canvas.manager.set_window_title("Gridlock replay")
+            self.dash = make_dashboard(self.fig)
+            self.last = self.dash.n_frames - 1
+            self.frame = 0
+            self.playing = False
+            self._build_controls()
 
         self.timer = self.fig.canvas.new_timer(interval=interval_ms)
         self.timer.add_callback(self._tick)
         self.fig.canvas.mpl_connect("key_press_event", self._on_key)
+        self._size = tuple(self.fig.get_size_inches())
+        self.fig.canvas.mpl_connect("resize_event", self._on_resize)
         self.dash.draw(0)
+
+    def _build_controls(self) -> None:
+        """A bar along the bottom: play button, frame slider and key hints. Hidden when saving."""
+        L = Layout(self.fig)
+        m, y, h = 0.25, L.h - 0.6, 0.48
+        card = L.card(m, y, L.w - 2 * m, h)
+        button_ax = L.axes(m + 0.12, y + 0.08, 1.0, h - 0.16)
+        slider_ax = L.axes(m + 1.4, y + 0.14, L.w - 2 * m - 5.4, h - 0.28)
+        self.button = Button(button_ax, "▶  Play", color=ACCENT, hovercolor=ACCENT_DARK)
+        self.button.label.set_color("white")
+        self.button.label.set_fontweight("bold")
+        for spine in button_ax.spines.values():
+            spine.set_visible(False)
+        self.button.on_clicked(lambda _event: self.toggle())
+        self.slider = Slider(slider_ax, "", 0, max(self.last, 1), valinit=0, valstep=1, color=ACCENT,
+                             track_color=CARD_EDGE, initcolor="none",
+                             handle_style={"facecolor": "white", "edgecolor": ACCENT, "size": 13})
+        self.slider.valtext.set_color(MUTED)
+        self.slider.valtext.set_fontweight("bold")
+        self.slider.on_changed(self._on_slider)
+        hint = L.text(L.w - m - 0.2, y + h / 2, "←  →  step     space  play / pause     home / end  jump",
+                      fontsize=8, color=MUTED, ha="right", va="center")
+        self._controls = (*card, slider_ax, button_ax, hint)
 
     def go(self, i: int) -> None:
         self.slider.set_val(max(0, min(i, self.last)))   # redraws through _on_slider
@@ -46,7 +71,7 @@ class ReplayViewer:
             self.timer.start()
         else:
             self.timer.stop()
-        self.button.label.set_text("Pause" if self.playing else "Play")
+        self.button.label.set_text("❚❚  Pause" if self.playing else "▶  Play")
         self.fig.canvas.draw_idle()
 
     def show(self) -> None:
@@ -64,11 +89,19 @@ class ReplayViewer:
                 anim.save(path, writer=PillowWriter(fps=fps))
             else:
                 self.dash.draw(self.last if frame is None else frame)
-                self.fig.savefig(path, dpi=120)
+                self.fig.savefig(path, dpi=130, bbox_inches="tight", pad_inches=0.1)   # no empty control bar
         finally:
             for artist in self._controls:
                 artist.set_visible(True)
             self.dash.draw(self.frame)
+
+    def _on_resize(self, _event) -> None:
+        size = tuple(self.fig.get_size_inches())
+        if size != self._size:                      # text and symbols don't scale with the window
+            self._size = size
+            self.dash.on_resize()
+            self.dash.draw(self.frame)
+            self.fig.canvas.draw_idle()
 
     def _on_slider(self, value) -> None:
         self.frame = self.dash.draw(int(value))
@@ -86,3 +119,12 @@ class ReplayViewer:
             self.toggle()
         elif event.key in jumps:
             self.go(jumps[event.key])
+
+
+class ComparisonViewer(ReplayViewer):
+    """Several trajectories of the same level side by side, stepped together (see
+    gridlock.viz.compare). Same controls and save() as ReplayViewer."""
+
+    def __init__(self, trajs, interval_ms: int = 300):
+        trajs = list(trajs)
+        self._setup(lambda fig: ComparisonDashboard(trajs, fig), figure_size(len(trajs)), interval_ms)

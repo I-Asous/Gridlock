@@ -12,6 +12,7 @@ EVENT_WORDS = {
     "REACHED_GOAL": "reaching the goal", "CHECKPOINT": "entering a checkpoint", "BUMPED": "bumping into something",
     "BLOCKED": "blocking another agent", "PUSHED": "pushing an object", "BROKE": "breaking an object",
     "TOGGLED": "toggling a switch", "PICKED_UP": "picking something up", "MOVED": "moving",
+    "TRAPPED": "stepping on a trap",
 }
 
 GENERAL_RULES = [
@@ -32,7 +33,9 @@ def describe_scenario(scenario, max_steps: Optional[int] = None) -> dict:
         rules.append(f"Switch at ({x}, {y}): INTERACT on it toggles '{flag}'.")
     grid = getattr(scenario, "grid", None)
     if grid is not None and grid.cells(Tile.CHECKPOINT):
-        rules.append("C: entering a checkpoint counts every time.")
+        rules.append("C: a bonus point. Entering it counts every time, not just the first.")
+    if grid is not None and grid.cells(Tile.TRAP):
+        rules.append("^: a trap. Stepping on it sends the agent back to where it started.")
 
     intent = getattr(scenario, "intent_config", None) or {}
     loopholes = []

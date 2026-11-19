@@ -2,7 +2,7 @@
 
 Every command-line script in the project, with its flags and what it writes, plus the usual order to run them in. For what the project is and how the packages fit together, see [README.md](README.md).
 
-> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. One level exists so far, `vase` (`gridlock/scenarios/levels/vase.yaml`). The monitor and the A\* and CSP agents are still stubs, so leave `monitor:` out of experiment configs for now.
+> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. Two levels exist so far, `vase` and `midfield`, in `gridlock/scenarios/levels/`. The monitor and the A\* and CSP agents are still stubs, so leave `monitor:` out of experiment configs for now.
 
 ## Setup
 
@@ -19,8 +19,9 @@ Run every command from the repository root so `gridlock` can be imported.
 | Command                                | What it does                                                | Works today?                |
 | -------------------------------------- | ----------------------------------------------------------- | --------------------------- |
 | `python3 -m pytest`                  | Runs the test suite                                         | Yes                         |
-| `python -m gridlock.agents.rl.train` | Trains one Q-learning or SARSA agent on one scenario        | Yes (level: `vase`)         |
-| `python -m gridlock.eval.runner`     | Runs a full experiment config: scenarios × agents × seeds | Yes (level: `vase`)         |
+| `python -m gridlock.agents.rl.train` | Trains one Q-learning or SARSA agent on one scenario        | Yes (`vase`, `midfield`)    |
+| `python -m gridlock.eval.runner`     | Runs a full experiment config: scenarios × agents × seeds | Yes (`vase`, `midfield`)    |
+| `python -m gridlock.eval.levelcheck` | Checks each level's loophole really pays off under R        | Yes                         |
 | `python -m gridlock.eval.report`     | Prints a summary table from a results file                  | Yes                         |
 | `python -m gridlock.viz`             | Replays recorded episodes, or saves them as PNG/GIF         | Yes                         |
 
@@ -28,6 +29,8 @@ Run every command from the repository root so `gridlock` can be imported.
 
 ```bash
 python3 -m pytest              # everything
+python3 -m pytest -q tests/test_engine.py          # loader, referee rules, GridWorld, R and R*
+python3 -m pytest -q tests/test_levels.py          # every level contains its designed loophole
 python3 -m pytest -q tests/test_rl.py              # Gymnasium env, Q-learning, SARSA, training loop
 python3 -m pytest -q tests/test_eval.py            # detection metrics, summary, experiment runner
 python3 -m pytest -q tests/test_viz.py             # rendering, trajectory recording, viewer
@@ -35,6 +38,25 @@ python3 -m pytest -k sarsa     # only tests whose names contain "sarsa"
 ```
 
 The suite takes about 5 seconds. `test_agents_package_never_imports_intent` enforces the rule that agents never see R\*: it fails if anything under `gridlock/agents` imports `gridlock.intent`.
+
+## Checking levels
+
+```bash
+python -m gridlock.eval.levelcheck                  # every level in gridlock/scenarios/levels
+python -m gridlock.eval.levelcheck vase             # one level (a name or a path to a .yaml file)
+python -m gridlock.eval.levelcheck --max-steps 60   # with the step limit your experiment uses
+```
+
+For each level, the checker plans the play that earns the most R and the best play that never violates R\*, then prints both. It exits with 1 if any level fails. A loophole level passes when:
+
+- the R-optimal play triggers at least one R\* violation, and every violation it triggers is listed under `loopholes`
+- a violation-free play still reaches the goal within the step limit
+- the loophole earns at least 3 R more than the clean play (`--min-gap`), so learners reliably prefer it
+- R\* scores the loophole play lower than the clean play
+- every `loopholes` name matches an intent rule
+- the state space is small enough for tabular learners (about 200,000 states, counting each opponent as able to stand on any walkable cell)
+
+A level with `control: true` passes when its R-optimal play is clean. The planner moves only the first agent (by sorted id); other agents stand still. `tests/test_levels.py` runs this check on every level, so a new level file is tested automatically.
 
 ## Training a single learner
 
@@ -147,12 +169,15 @@ From Python, `summarize(path)` returns the same rows as a list of dicts.
 
 ```bash
 python -m gridlock.viz RESULTS.jsonl --list                   # list the episodes in the file
-python -m gridlock.viz RESULTS.jsonl --episode 3              # open the interactive viewer
+python -m gridlock.viz RESULTS.jsonl                          # every agent side by side (first level, first seed)
+python -m gridlock.viz RESULTS.jsonl --scenario vase --seed 2 # every agent on that level and seed
+python -m gridlock.viz RESULTS.jsonl -e 3 --compare           # every agent on episode 3's level and seed
+python -m gridlock.viz RESULTS.jsonl --episode 3              # one episode in detail
 python -m gridlock.viz RESULTS.jsonl -e 3 --save ep3.gif      # save the whole episode as a GIF
 python -m gridlock.viz RESULTS.jsonl -e 3 --save ep3.png --frame 10   # save one frame
 ```
 
-The viewer shows the grid, the level (its description, rules, R, R\* and designed loopholes), cumulative R against R\*, monitor flags against the ground-truth loophole steps, and each step's events. Use ←/→ to step, space to play or pause, and Home/End to jump to the start or end.
+Without `-e`, the viewer compares agents: one board per agent on the same level and seed, stepped together, each with the agent's path, R\* violations (✕) and how its episode ended, plus a shared R/R\* chart and the level description. With `-e`, it shows one episode in detail: the grid, the level (its description, rules, R, R\* and designed loopholes), cumulative R against R\*, monitor flags against the ground-truth loophole steps, and each step's events. Use ←/→ to step, space to play or pause, and Home/End to jump to the start or end.
 
 To watch an episode while it runs instead of replaying it:
 
@@ -182,14 +207,16 @@ The reward is R only. `info["events"]` carries the step's event log. R\* is neve
 
 ## Typical workflow
 
-With the `vase` level:
+With the `vase` and `midfield` levels (the experiment takes about 70 seconds):
 
 ```bash
 python3 -m pytest                                                              # 1. check everything passes
+python -m gridlock.eval.levelcheck                                             #    and that every level's loophole pays
 python -m gridlock.eval.runner experiments/sarsa_vs_q.yaml runs/sarsa_vs_q/results.jsonl   # 2. run the experiment
 python -m gridlock.eval.report runs/sarsa_vs_q/results.jsonl                   # 3. compare the agents
 python -m gridlock.viz runs/sarsa_vs_q/results.jsonl --list                    # 4. find interesting episodes
-python -m gridlock.viz runs/sarsa_vs_q/results.jsonl -e 0                      #    and replay them
+python -m gridlock.viz runs/sarsa_vs_q/results.jsonl                           #    compare the agents side by side
+python -m gridlock.viz runs/sarsa_vs_q/results.jsonl -e 0                      #    or replay one in detail
 ```
 
 Then plot the training curves from `runs/sarsa_vs_q/<name>_<scenario>_s<seed>/train_log.jsonl` with `plot_training_curves`.
