@@ -6,7 +6,9 @@ scenarios: [vase, midfield]
 seeds: [0, 1, 2, 3, 4]
 max_steps: 100
 train_log_dir: runs/sarsa_vs_q        # train_log.jsonl + checkpoints per learner x scenario x seed
-# monitor: {divergence_threshold: 0.5}   # enable once Monitor.observe is implemented
+# Online monitor with a partial spec: it knows broke_vase but not farmed_bonus (held out), which it
+# must catch from the rule-agnostic replay signal. See gridlock/monitor/monitor.py.
+monitor: {divergence_threshold: 5.0, decay: 0.8, known_rules: [broke_vase], replay_weight: 3.0}
 agents:
   - {name: q,     type: q_learning, train_episodes: 5000, params: {alpha: 0.1, gamma: 0.99, epsilon_decay: 0.999}}
   - {name: sarsa, type: sarsa,      train_episodes: 5000, params: {alpha: 0.1, gamma: 0.99, epsilon_decay: 0.999}}

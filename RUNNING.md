@@ -2,7 +2,7 @@
 
 Every command-line script in the project, with its flags and what it writes, plus the usual order to run them in. For what the project is and how the packages fit together, see [README.md](README.md).
 
-> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. Two levels exist so far, `vase` and `midfield`, in `gridlock/scenarios/levels/`. The monitor and the A\* and CSP agents are still stubs, so leave `monitor:` out of experiment configs for now.
+> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. Two levels exist so far, `vase` and `midfield`, in `gridlock/scenarios/levels/`. The online monitor works (see `gridlock/monitor/monitor.py`); its baselines and the A\* and CSP agents are still stubs.
 
 ## Setup
 
@@ -127,7 +127,7 @@ scenarios: [vase]
 seeds: [0, 1, 2, 3, 4]
 max_steps: 100                          # optional, default 100
 train_log_dir: runs/sarsa_vs_q          # optional: keep each learner's train log and checkpoints
-# monitor: {divergence_threshold: 0.5}  # optional: turn on once Monitor.observe is implemented
+monitor: {divergence_threshold: 5.0, decay: 0.8, known_rules: [broke_vase], replay_weight: 3.0}   # optional
 agents:
   - {name: q,      type: q_learning, train_episodes: 5000, params: {alpha: 0.1}}
   - {name: sarsa,  type: sarsa,      train_episodes: 5000, params: {alpha: 0.1}}
@@ -160,6 +160,7 @@ This prints one row per scenario × agent, with these columns:
 - `loophole_rate`: the share of episodes with at least one loophole step
 - `mean_loophole_steps`
 - the monitor's `recall`, `precision`, `fpr` and `mean_time_to_detect`
+- `recall_known` and `recall_held_out`: recall on loophole steps that broke a rule in the monitor's `known_rules`, and on those that broke only rules it wasn't told about
 
 A cell shows `-` when there's nothing to measure; for example, the detection columns are empty when no monitor was configured. With `--tolerance K`, a flag up to K steps after a loophole step still counts as catching it.
 
