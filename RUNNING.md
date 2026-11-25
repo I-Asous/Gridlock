@@ -16,14 +16,14 @@ Run every command from the repository root so `gridlock` can be imported.
 
 ## Scripts at a glance
 
-| Command                                | What it does                                                | Works today?                |
-| -------------------------------------- | ----------------------------------------------------------- | --------------------------- |
-| `python3 -m pytest`                  | Runs the test suite                                         | Yes                         |
-| `python -m gridlock.agents.rl.train` | Trains one Q-learning or SARSA agent on one scenario        | Yes (`vase`, `midfield`)    |
-| `python -m gridlock.eval.runner`     | Runs a full experiment config: scenarios × agents × seeds | Yes (`vase`, `midfield`)    |
-| `python -m gridlock.eval.levelcheck` | Checks each level's loophole really pays off under R        | Yes                         |
-| `python -m gridlock.eval.report`     | Prints a summary table from a results file                  | Yes                         |
-| `python -m gridlock.viz`             | Replays recorded episodes, or saves them as PNG/GIF         | Yes                         |
+| Command                                | What it does                                                | Works today?                 |
+| -------------------------------------- | ----------------------------------------------------------- | ---------------------------- |
+| `python3 -m pytest`                  | Runs the test suite                                         | Yes                          |
+| `python -m gridlock.agents.rl.train` | Trains one Q-learning or SARSA agent on one scenario        | Yes (`vase`, `midfield`) |
+| `python -m gridlock.eval.runner`     | Runs a full experiment config: scenarios × agents × seeds | Yes (`vase`, `midfield`) |
+| `python -m gridlock.eval.levelcheck` | Checks each level's loophole really pays off under R        | Yes                          |
+| `python -m gridlock.eval.report`     | Prints a summary table from a results file                  | Yes                          |
+| `python -m gridlock.viz`             | Replays recorded episodes, or saves them as PNG/GIF         | Yes                          |
 
 ## Tests
 
