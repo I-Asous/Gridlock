@@ -46,7 +46,7 @@ from gridlock.env.grid import Action, Tile
 DEFAULT_OBJECT = {"pushable": True, "breakable": False}   # as in gridlock.env.referee
 
 
-# --- a small generic CSP solver ------------------------------------------------------------------
+
 
 class Problem:
     """Variables with finite domains, binary constraints, and n-ary constraints. Values must be
@@ -250,8 +250,7 @@ class _Model:
         self._successors: dict = {}
         self._layouts = self._all_layouts(getattr(env.scenario, "object_props", {}) or {})
 
-    # --- domains and constraints ---------------------------------------------------------------
-
+    # domains and constraints 
     def _all_layouts(self, props: dict) -> list[tuple[tuple, int]]:
         """(layout, pushes/breaks needed to get there) for every object layout worth considering."""
         floor = [c for c in self.grid.cells(Tile.FLOOR) if c not in self.blocked]
@@ -312,7 +311,7 @@ class _Model:
                     if next_pos in next_positions and next_layout in next_layouts:
                         yield pos, layout, next_pos, next_layout
 
-    # --- the rules, through the GridWorld --------------------------------------------------------
+    # rules
 
     def _state(self, pos, layout):
         agents = tuple((aid, pos if aid == self.me else p) for aid, p in self.base.agents)
