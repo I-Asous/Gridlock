@@ -1,0 +1,4 @@
+# Optional: the deep RL learners (dqn, ppo, a2c in gridlock.agents.rl.deep).
+#   python3 -m pip install -r requirements.txt -r requirements-deep.txt
+stable-baselines3>=2.3
+torch>=2.2

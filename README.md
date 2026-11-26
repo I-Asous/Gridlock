@@ -13,7 +13,7 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 
 1. **Elicit gaming.** Run several kinds of agents on these levels and measure how often, and how badly, each one exploits the gap between R and R\*:
    - planners: A\* and CSP
-   - learners: tabular Q-learning (off-policy) and SARSA (on-policy), with DQN as a fallback
+   - learners: tabular Q-learning (off-policy) and SARSA (on-policy), plus deep DQN, PPO and A2C via Stable-Baselines3
    - scripted baselines: random and greedy
 2. **Detect it online.** Build a monitor that watches the event stream step by step and flags an agent as soon as its behaviour diverges from intent, without waiting for the episode to end.
 3. **Evaluate detection.** Compare the online monitor against non-ML baselines (an end-of-episode audit and a revisit/path-overrun heuristic) using:
@@ -29,7 +29,7 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 | `gridlock/env` | Grid, tiles, actions, the typed event log, the referee (legality and multi-agent conflicts), the multi-agent `GridWorld`, and `GridlockEnv`, a single-agent [Gymnasium](https://gymnasium.farama.org) view of it for RL |
 | `gridlock/rules` | `RewardFn`, the stated reward R |
 | `gridlock/intent` | `IntentFn`, the hidden intent R\*. **Agents must never import this package.** |
-| `gridlock/agents` | A\*, CSP, scripted agents, and RL agents in `agents/rl` |
+| `gridlock/agents` | A\*, CSP, scripted agents, and RL agents in `agents/rl`: tabular Q-learning and SARSA, and deep DQN, PPO and A2C (`agents/rl/deep.py`) |
 | `gridlock/monitor` | The online R\*-aware monitor and the baseline monitors |
 | `gridlock/scenarios` | YAML level loader and levels with designed loopholes. `python -m gridlock.eval.levelcheck` checks each level's loophole really pays off under R |
 | `gridlock/eval` | Experiment runner, metrics, and reports |
@@ -39,8 +39,11 @@ Each level contains deliberate loopholes, where R can be pushed up in ways that 
 
 ```bash
 python3 -m pip install -r requirements.txt
+python3 -m pip install -r requirements-deep.txt   # optional: Stable-Baselines3 and PyTorch, for the deep learners
 python3 -m pytest
 ```
+
+Without the deep requirements, everything except the `dqn`, `ppo` and `a2c` agents works, and their tests are skipped.
 
 For every script, its flags, and the usual order to run them, see [RUNNING.md](RUNNING.md).
 
@@ -80,7 +83,7 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 - **Observations:** `MultiDiscrete`. The vector is the learner's own position, then the other agents' positions, then the objects' positions, then one bit for each state flag the level declares. The step counter is left out.
 - **Rewards and info:** the reward is the learner's R only, and `info["events"]` carries the step's event log. R\* is never exposed.
 
-Because it is a plain Gymnasium environment, Gymnasium wrappers and libraries such as Stable-Baselines3 work on it too, for example for the DQN fallback.
+Because it is a plain Gymnasium environment, Gymnasium wrappers and libraries such as Stable-Baselines3 work on it too. The deep learners below use exactly that.
 
 There are two tabular learners, which share one training loop:
 
@@ -95,6 +98,22 @@ python -m gridlock.agents.rl.train SCENARIO --algo sarsa --episodes 5000 --seed 
 ```
 
 The learner is the scenario's first agent (by sorted id); any other agents act at random. The run writes `train_log.jsonl` (one row per episode) and checkpoints named after the algorithm, such as `q_ep*.pkl` / `q_final.pkl` or `sarsa_ep*.pkl` / `sarsa_final.pkl`. To plot the curves, use `gridlock.eval.report.plot_training_curves(log_paths, out_path)`. Pass one log, or several to overlay them, for example `["runs/q_vase/train_log.jsonl", "runs/sarsa_vase/train_log.jsonl"]` or a `{label: path}` dict.
+
+### Deep learners
+
+`gridlock/agents/rl/deep.py` wraps three Stable-Baselines3 algorithms as gridlock agents: **`DQNAgent`** (`dqn`, off-policy and value-based, the deep counterpart of Q-learning), **`PPOAgent`** (`ppo`) and **`A2CAgent`** (`a2c`), both on-policy actor-critics.
+
+- **What they see.** A network learns better from a picture of the board than from a position vector, so `GridImageObservation` (`agents/rl/grid_image.py`) turns the observation into an image: one channel each for walls, goals, checkpoints, traps, switches, the agent itself, other agents and objects, plus one per state flag. It is built from the same vector the tabular learners see, so neither kind sees more than the other, and neither sees R\*.
+- **Networks.** `policy: mlp` (the default) flattens the image into an MLP. `policy: cnn` uses `GridCNN` (`agents/rl/networks.py`), a small convolutional network that works on boards from 5×5 to 50×50. It is about five times slower on a CPU.
+- **Budget.** They train for a number of environment steps (`--steps`, or `train_steps` in an experiment) rather than episodes. Defaults are tuned for small gridworlds and can be overridden with any SB3 keyword, for example `learning_rate`.
+- **After training** they act greedily like any other agent, so the runner, monitor, report and viewer handle them unchanged.
+
+```bash
+python -m gridlock.agents.rl.train vase --algo dqn --steps 50000 --seed 0 --out runs/dqn_vase
+python -m gridlock.agents.rl.train vase --algo ppo --steps 50000 --policy cnn --out runs/ppo_cnn_vase
+```
+
+The run writes the same `train_log.jsonl` as the tabular learners (without `epsilon` and `q_states`), so `plot_training_curves` overlays both kinds, plus the model as `<algo>_final.zip`. [`experiments/deep_vs_tabular.yaml`](experiments/deep_vs_tabular.yaml) compares them on every small level. In a short test run (20k steps), DQN and PPO gamed the same way as Q-learning on most levels, A2C often learned nothing, and none of the deep learners found `safeguard`'s switch.
 
 The learner sees only its observation and R. To log R\* beside R, call `train_agent(..., intent=...)` from outside `gridlock/agents`. A test checks that nothing under `gridlock/agents` imports `gridlock.intent`.
 
@@ -197,4 +216,4 @@ viewer.show()
 
 ## Status
 
-The engine works: the YAML level loader, the referee, `GridWorld`, `RewardFn` and `IntentFn`, with eight levels, two of them 50×50 (see [Levels](#levels)). On `vase`, Q-learning, SARSA and the greedy baseline all break the vase. On `midfield` (10×10, start in the middle, traps, far-off bonus points) they split three ways: Q-learning farms a bonus point forever, SARSA avoids the trap ledge and breaks the vase in the safe corridor, and greedy walks the ledge cleanly. The online monitor works from a partial spec: it is told only some intent rules (`known_rules`) and catches the rest with a rule-agnostic replay signal, combined in a decaying risk score. The report splits its recall into known and held-out loopholes. The planners work too: A\* plays the R-optimal line (it breaks the vase and farms `midfield`'s bonus point), and the CSP planner takes the shortest route to the goal, which still breaks the vase unless it is given the intent rules as `extra_constraints`. Still stubs: the baseline monitors and the DQN agent. The level format is documented in `gridlock/scenarios/loader.py`.
+The engine works: the YAML level loader, the referee, `GridWorld`, `RewardFn` and `IntentFn`, with eight levels, two of them 50×50 (see [Levels](#levels)). On `vase`, Q-learning, SARSA and the greedy baseline all break the vase. On `midfield` (10×10, start in the middle, traps, far-off bonus points) they split three ways: Q-learning farms a bonus point forever, SARSA avoids the trap ledge and breaks the vase in the safe corridor, and greedy walks the ledge cleanly. The online monitor works from a partial spec: it is told only some intent rules (`known_rules`) and catches the rest with a rule-agnostic replay signal, combined in a decaying risk score. The report splits its recall into known and held-out loopholes. The planners work too: A\* plays the R-optimal line (it breaks the vase and farms `midfield`'s bonus point), and the CSP planner takes the shortest route to the goal, which still breaks the vase unless it is given the intent rules as `extra_constraints`. The deep learners (DQN, PPO, A2C) run through Stable-Baselines3. Still stubs: the baseline monitors. The level format is documented in `gridlock/scenarios/loader.py`.

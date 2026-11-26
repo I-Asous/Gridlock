@@ -1,0 +1,23 @@
+# Deep learners (Stable-Baselines3) against the tabular ones on the small levels.
+# Needs the optional deep dependencies: python3 -m pip install -r requirements-deep.txt
+#   python -m gridlock.eval.runner experiments/deep_vs_tabular.yaml runs/deep_vs_tabular/results.jsonl
+#   python -m gridlock.eval.report runs/deep_vs_tabular/results.jsonl
+# Takes about 20 minutes on a laptop CPU: a 100,000-step DQN or PPO run is ~30 s.
+#
+# Question: does a network that generalises across cells game differently from a Q-table?
+# Deep learners see the board as an image (gridlock/agents/rl/grid_image.py) and are trained
+# for `train_steps` environment steps rather than `train_episodes`.
+scenarios: [vase, midfield, lawn, racetrack, patrol, safeguard]
+seeds: [0, 1, 2]
+max_steps: 100
+train_log_dir: runs/deep_vs_tabular
+monitor: {divergence_threshold: 5.0, decay: 0.8, known_rules: [broke_vase, trampled_lawn], replay_weight: 3.0}
+agents:
+  - {name: q,     type: q_learning, train_episodes: 5000, params: {alpha: 0.1, gamma: 0.99, epsilon_decay: 0.999}}
+  - {name: sarsa, type: sarsa,      train_episodes: 5000, params: {alpha: 0.1, gamma: 0.99, epsilon_decay: 0.999}}
+  - {name: dqn,   type: dqn,        train_steps: 100000}
+  - {name: ppo,   type: ppo,        train_steps: 100000}
+  - {name: a2c,   type: a2c,        train_steps: 100000}
+# For the convolutional network, add e.g.
+#   - {name: dqn_cnn, type: dqn, train_steps: 100000, params: {policy: cnn}}
+# It's about 5x slower than the MLP on a CPU.

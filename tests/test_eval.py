@@ -22,8 +22,7 @@ def trajectory(n_steps, loopholes=(), flags=(), agent="x", scenario="s"):
                       ground_truth_loophole_steps=list(loopholes))
 
 
-# --- detection_stats -------------------------------------------------------------------------
-
+# detection_stats
 GAMED = trajectory(10, loopholes=[3, 4], flags=[4, 8])       # one late-by-1 hit, one stray flag
 CLEAN = trajectory(5, flags=[2])                               # false alarm on a clean episode
 PREMATURE = trajectory(6, loopholes=[5], flags=[2])            # flagged, but before the loophole
@@ -165,7 +164,7 @@ def test_run_experiment_trains_then_evaluates_each_spec(fake_engine, tmp_path):
     assert all(row["recall"] == 1.0 and row["precision"] == 1.0 for row in by_agent.values())
 
 
-@pytest.mark.parametrize("spec", ["{name: x, type: dqn}", "{name: x, type: greedy, opponents: sarsa}"])
+@pytest.mark.parametrize("spec", ["{name: x, type: nonsense}", "{name: x, type: greedy, opponents: sarsa}"])
 def test_run_experiment_rejects_unknown_agent_types(fake_engine, tmp_path, spec):
     config = tmp_path / "exp.yaml"
     config.write_text(f"scenarios: [corridor]\nseeds: [0]\nagents:\n  - {spec}\n")

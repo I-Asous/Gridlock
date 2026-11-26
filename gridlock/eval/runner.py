@@ -17,7 +17,7 @@ import yaml
 
 from gridlock.agents.astar import AStarAgent
 from gridlock.agents.csp import CSPAgent
-from gridlock.agents.rl import ALGORITHMS
+from gridlock.agents.rl import ALGORITHMS, DEEP_ALGORITHMS
 from gridlock.agents.rl.train import train_agent
 from gridlock.agents.scripted import GreedyAgent, RandomAgent
 from gridlock.env.gridworld import GridWorld
@@ -29,8 +29,9 @@ from gridlock.scenarios.describe import describe_scenario
 
 # Config `type` -> agent class. Learners (ALGORITHMS) are trained before they are evaluated.
 AGENT_TYPES = {"random": RandomAgent, "greedy": GreedyAgent, "astar": AStarAgent, "csp": CSPAgent,
-               "q_learning": ALGORITHMS["q"], "sarsa": ALGORITHMS["sarsa"]}
-LEARNERS = {"q_learning", "sarsa"}
+               "q_learning": ALGORITHMS["q"], "sarsa": ALGORITHMS["sarsa"], **DEEP_ALGORITHMS}
+LEARNERS = {"q_learning", "sarsa"}                 # tabular: trained for `train_episodes`
+DEEP_LEARNERS = set(DEEP_ALGORITHMS)               # Stable-Baselines3: trained for `train_steps`
 
 
 @dataclass
@@ -142,9 +143,10 @@ def run_experiment(config_path: str, out_path: str) -> None:
 
     Each spec controls the scenario's first agent (by sorted id). Every other agent is an
     `opponents` type (default "random", seeded per run). `type` is a key of AGENT_TYPES and
-    `params` go to its constructor. Learners are trained on R alone for `train_episodes` on a
-    fresh world (R* is logged beside R when `train_log_dir` is set), then evaluated greedily for
-    one episode with the same seed. The Trajectory's `agent` field is the spec's `name`, so
+    `params` go to its constructor. Learners are trained on R alone on a fresh world (R* is
+    logged beside R when `train_log_dir` is set), then evaluated greedily for one episode with the
+    same seed: the tabular ones (q_learning, sarsa) for `train_episodes` episodes, the deep ones
+    (dqn, ppo, a2c, which need Stable-Baselines3) for `train_steps` environment steps. The Trajectory's `agent` field is the spec's `name`, so
     results group by spec rather than by class.
 
     `monitor.known_rules` may name rules from any of the listed levels: each level's monitor is
@@ -158,7 +160,7 @@ def run_experiment(config_path: str, out_path: str) -> None:
     for spec in specs:
         for key in ("type", *(("opponents",) if "opponents" in spec else ())):
             kind = spec[key]
-            if kind not in AGENT_TYPES or (key == "opponents" and kind in LEARNERS):
+            if kind not in AGENT_TYPES or (key == "opponents" and kind in LEARNERS | DEEP_LEARNERS):
                 raise ValueError(f"agent spec {spec.get('name')!r}: unsupported {key} {kind!r}")
     if len({spec["name"] for spec in specs}) != len(specs):
         raise ValueError("agent spec names must be unique")
@@ -204,12 +206,15 @@ def _run_spec(scenario, spec: dict, seed: int, max_steps: int, monitor_config: O
         return {aid: _build(kind, aid, {}, seed + i + 1) for i, aid in enumerate(other_ids)}
 
     learner = _build(spec["type"], learner_id, spec.get("params", {}), seed)
-    if spec["type"] in LEARNERS:
+    if spec["type"] in LEARNERS | DEEP_LEARNERS:
         env = GridlockEnv(GridWorld(scenario, max_steps=max_steps), learner_id, opponents())
         out_dir = train_dir / f"{spec['name']}_{scenario.name}_s{seed}" if train_dir is not None else None
-        train_agent(env, learner, spec.get("train_episodes", 1000), seed, out_dir=out_dir,
-                    intent=intent if out_dir is not None else None)
-        learner.training = False
+        log_intent = intent if out_dir is not None else None
+        if spec["type"] in DEEP_LEARNERS:
+            learner.train(env, spec.get("train_steps", 50_000), seed, out_dir=out_dir, intent=log_intent)
+        else:
+            train_agent(env, learner, spec.get("train_episodes", 1000), seed, out_dir=out_dir, intent=log_intent)
+            learner.training = False
 
     world = GridWorld(scenario, max_steps=max_steps)
     monitor_config = level_monitor_config(monitor_config, scenario)

@@ -1,8 +1,5 @@
-"""DQN fallback for scenarios too large for a Q-table. Implement only if needed."""
+"""DQN, kept at its old import path. The deep learners live in gridlock.agents.rl.deep."""
 
-from gridlock.agents.base import Agent
+from gridlock.agents.rl.deep import DQNAgent
 
-
-class DQNAgent(Agent):
-    def act(self, obs):
-        raise NotImplementedError
+__all__ = ["DQNAgent"]

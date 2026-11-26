@@ -1,9 +1,11 @@
 """Training loop on the Gymnasium API: logs R (and, for analysis only, R*) per episode and
 checkpoints the agent. Works for both tabular learners: Q-learning (off-policy) and SARSA
-(on-policy).
+(on-policy). The deep learners (dqn, ppo, a2c; see gridlock.agents.rl.deep) train through
+Stable-Baselines3 and are counted in environment steps instead of episodes.
 
     python -m gridlock.agents.rl.train SCENARIO --algo q     --episodes 5000 --seed 0 --out runs/q_SCENARIO
     python -m gridlock.agents.rl.train SCENARIO --algo sarsa --episodes 5000 --seed 0 --out runs/sarsa_SCENARIO
+    python -m gridlock.agents.rl.train SCENARIO --algo dqn   --steps 50000 --policy cnn --out runs/dqn_SCENARIO
 """
 
 import argparse
@@ -14,7 +16,7 @@ from pathlib import Path
 import gymnasium
 from gymnasium.wrappers import RecordEpisodeStatistics
 
-from gridlock.agents.rl import ALGORITHMS
+from gridlock.agents.rl import ALGORITHMS, DEEP_ALGORITHMS
 from gridlock.agents.rl.q_learning import QLearningAgent
 from gridlock.env.gym_env import ENV_ID
 
@@ -95,14 +97,27 @@ def train(scenario_name: str, episodes: int, seed: int, out_dir: str, checkpoint
     return train_agent(env, learner, episodes, seed, out_dir, checkpoint_every)
 
 
+def train_deep(scenario_name: str, steps: int, seed: int, out_dir: str, max_steps: int = 100, algo: str = "dqn",
+               **agent_kwargs) -> list[dict]:
+    """Train a deep learner (`algo` is a key of DEEP_ALGORITHMS: "dqn", "ppo" or "a2c") for
+    `steps` environment steps as the scenario's first agent; other agents act at random."""
+    if algo not in DEEP_ALGORITHMS:
+        raise ValueError(f"unknown algo {algo!r}; expected one of {sorted(DEEP_ALGORITHMS)}")
+    env = gymnasium.make(ENV_ID, scenario=scenario_name, max_steps=max_steps, seed=seed)
+    learner = DEEP_ALGORITHMS[algo](env.unwrapped.learner_id, seed=seed, **agent_kwargs)
+    return learner.train(env, steps, seed, out_dir=out_dir)
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(prog="python -m gridlock.agents.rl.train",
-                                     description="Train a tabular Q-learning or SARSA agent on a scenario, "
-                                                 "using R only.")
+                                     description="Train a learner on a scenario, using R only.")
     parser.add_argument("scenario")
-    parser.add_argument("--algo", choices=sorted(ALGORITHMS), default="q",
-                        help="q: off-policy Q-learning (default); sarsa: on-policy SARSA")
-    parser.add_argument("--episodes", type=int, default=5000)
+    parser.add_argument("--algo", choices=sorted(ALGORITHMS) + sorted(DEEP_ALGORITHMS), default="q",
+                        help="q: off-policy Q-learning (default); sarsa: on-policy SARSA; dqn, ppo, a2c: deep "
+                             "learners (need Stable-Baselines3)")
+    parser.add_argument("--episodes", type=int, default=5000, help="training episodes (tabular learners)")
+    parser.add_argument("--steps", type=int, default=50_000, help="environment steps (deep learners)")
+    parser.add_argument("--policy", choices=["mlp", "cnn"], default="mlp", help="network (deep learners)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", required=True, help="directory for train_log.jsonl and checkpoints")
     parser.add_argument("--checkpoint-every", type=int, default=500)
@@ -111,6 +126,14 @@ def main(argv=None) -> None:
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--epsilon-decay", type=float, default=0.995)
     args = parser.parse_args(argv)
+
+    if args.algo in DEEP_ALGORITHMS:
+        rows = train_deep(args.scenario, args.steps, args.seed, args.out, args.max_steps, algo=args.algo,
+                          policy=args.policy, gamma=args.gamma)
+        tail = rows[-100:]
+        mean = f"{sum(row['R'] for row in tail) / len(tail):+.2f}" if tail else "n/a"
+        print(f"{args.steps} steps, {len(rows)} episodes; mean R over the last {len(tail)}: {mean}")
+        return
 
     rows = train(args.scenario, args.episodes, args.seed, args.out, args.checkpoint_every, args.max_steps,
                  algo=args.algo, alpha=args.alpha, gamma=args.gamma, epsilon_decay=args.epsilon_decay)

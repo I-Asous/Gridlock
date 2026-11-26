@@ -123,8 +123,9 @@ def plot_training_curves(log_paths: LogPaths, out_path: str, window: int = 100) 
             ax.plot(episodes, values, color=color, alpha=0.2 if single else 0.1, lw=0.8)
             ax.plot(episodes, _moving_average(values, window), color=color, ls=style, lw=1.8,
                     label=f"{name} ({window}-episode mean)" if single else f"{label} {name}")
-        ax_eps.plot(episodes, [row["epsilon"] for row in rows], color="#6b7280" if single else run_color,
-                    label=None if single else label)
+        if rows and all("epsilon" in row for row in rows):      # deep learners don't log ε
+            ax_eps.plot(episodes, [row["epsilon"] for row in rows], color="#6b7280" if single else run_color,
+                        label=None if single else label)
     ax.set_ylabel("episode return")
     ax.set_title("Training: stated reward R vs hidden intent R*" if has_r_star else "Training: stated reward R")
     if any(runs.values()):

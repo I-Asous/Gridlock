@@ -2,7 +2,7 @@
 
 Every command-line script in the project, with its flags and what it writes, plus the usual order to run them in. For what the project is and how the packages fit together, see [README.md](README.md).
 
-> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. Six levels exist, in `gridlock/scenarios/levels/`: `vase`, `midfield`, `lawn`, `racetrack`, `patrol` (a control level with no loophole), `safeguard`, and two 50×50 levels, `estate` and `expedition`. The online monitor works (see `gridlock/monitor/monitor.py`), and so do the A\* and CSP planners; the monitor's baselines and the DQN agent are still stubs.
+> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. Eight levels exist, in `gridlock/scenarios/levels/`: `vase`, `midfield`, `lawn`, `racetrack`, `patrol` (a control level with no loophole), `safeguard`, and two 50×50 levels, `estate` and `expedition`. The online monitor works (see `gridlock/monitor/monitor.py`), and so do the A\* and CSP planners and the deep learners (DQN, PPO, A2C via Stable-Baselines3); the monitor's baselines are still stubs.
 
 ## Setup
 
@@ -10,6 +10,7 @@ Python 3.10 or newer. The project is developed on 3.13.
 
 ```bash
 python3 -m pip install -r requirements.txt     # gymnasium, numpy, matplotlib, pyyaml, pytest
+python3 -m pip install -r requirements-deep.txt   # optional: stable-baselines3 and torch, for dqn/ppo/a2c
 ```
 
 Run every command from the repository root so `gridlock` can be imported.
@@ -61,28 +62,33 @@ A level with `control: true` passes when its R-optimal play is clean. The planne
 ## Training a single learner
 
 ```bash
-python -m gridlock.agents.rl.train SCENARIO [--algo q|sarsa] --out DIR [options]
+python -m gridlock.agents.rl.train SCENARIO [--algo q|sarsa|dqn|ppo|a2c] --out DIR [options]
 ```
 
-| Flag                   | Default    | Meaning                                                                                 |
-| ---------------------- | ---------- | --------------------------------------------------------------------------------------- |
-| `SCENARIO`           | (required) | Level name, loaded from `gridlock/scenarios/levels/`                                  |
-| `--algo`             | `q`      | `q` for off-policy Q-learning, `sarsa` for on-policy SARSA                          |
-| `--out`              | (required) | Output directory                                                                        |
-| `--episodes`         | `5000`   | Training episodes                                                                       |
-| `--seed`             | `0`      | Seeds the environment, the learner and the random opponents                             |
-| `--checkpoint-every` | `500`    | Save a checkpoint every N episodes                                                      |
-| `--max-steps`        | `100`    | Episode time limit                                                                      |
-| `--alpha`            | `0.1`    | Learning rate                                                                           |
-| `--gamma`            | `0.99`   | Discount factor                                                                         |
-| `--epsilon-decay`    | `0.995`  | ε is multiplied by this after each episode; ε starts at 1.0 and stops falling at 0.05 |
+| Flag                   | Default    | Meaning                                                                                                                                          |
+| ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SCENARIO`           | (required) | Level name, loaded from `gridlock/scenarios/levels/`                                                                                           |
+| `--algo`             | `q`      | `q` for off-policy Q-learning, `sarsa` for on-policy SARSA; `dqn`, `ppo` or `a2c` for a deep learner (needs `requirements-deep.txt`) |
+| `--out`              | (required) | Output directory                                                                                                                                 |
+| `--episodes`         | `5000`   | Training episodes (tabular learners)                                                                                                             |
+| `--steps`            | `50000`  | Training environment steps (deep learners)                                                                                                       |
+| `--policy`           | `mlp`    | Deep learners' network: `mlp`, or `cnn` for the convolutional `GridCNN`                                                                    |
+| `--seed`             | `0`      | Seeds the environment, the learner and the random opponents                                                                                      |
+| `--checkpoint-every` | `500`    | Save a checkpoint every N episodes                                                                                                               |
+| `--max-steps`        | `100`    | Episode time limit                                                                                                                               |
+| `--alpha`            | `0.1`    | Learning rate                                                                                                                                    |
+| `--gamma`            | `0.99`   | Discount factor                                                                                                                                  |
+| `--epsilon-decay`    | `0.995`  | ε is multiplied by this after each episode; ε starts at 1.0 and stops falling at 0.05                                                          |
 
 Example:
 
 ```bash
 python -m gridlock.agents.rl.train vase --algo q     --episodes 5000 --seed 0 --out runs/q_vase
 python -m gridlock.agents.rl.train vase --algo sarsa --episodes 5000 --seed 0 --out runs/sarsa_vase
+python -m gridlock.agents.rl.train vase --algo dqn   --steps 50000    --seed 0 --out runs/dqn_vase
 ```
+
+`--alpha`, `--epsilon-decay` and `--checkpoint-every` apply to the tabular learners only. A deep run writes `train_log.jsonl` (without `epsilon` and `q_states`) and the model as `<algo>_final.zip`.
 
 The learner controls the scenario's first agent (by sorted id). Every other agent acts at random. Each run writes these files to `--out`:
 
@@ -134,11 +140,11 @@ agents:
   - {name: greedy, type: greedy}
 ```
 
-- **`type`** is one of `random`, `greedy`, `astar`, `csp`, `q_learning` or `sarsa`.
+- **`type`** is one of `random`, `greedy`, `astar`, `csp`, `q_learning`, `sarsa`, `dqn`, `ppo` or `a2c`. The last three need `requirements-deep.txt`.
 - **`params`** are passed to the agent's constructor.
 - **Planners** (`astar`, `csp`) plan at the start of each episode, modelling every other agent as standing still, and replan whenever the world stops matching the plan. `astar` plays the line with the most total R within `max_steps` (params: `max_expansions`, default 1,000,000). `csp` takes the shortest route to the goal (params: `horizon`, the longest plan it tries, default 30; `max_nodes`, the search budget per horizon, default 20,000; `extra_constraints`, a list of events to rule out, in the same format as an intent `forbid` rule, for example `[{kind: BROKE, target: vase}]`).
 - **`opponents`** (optional, default `random`) sets the agent type for every agent except the first. It can't be a learner.
-- **Learners** are trained on R alone for `train_episodes` episodes, then evaluated greedily for one episode per seed.
+- **Learners** are trained on R alone, then evaluated greedily for one episode per seed. Tabular learners train for `train_episodes` episodes (default 1000), and deep learners for `train_steps` environment steps (default 50,000). A deep learner's `params` can include `policy: cnn` and any Stable-Baselines3 setting.
 - **`name`** labels the results, so it must be unique.
 - **`max_steps`** applies to levels that don't set their own. The 50×50 levels set `max_steps: 300` in their YAML, and that wins. On those levels, give the CSP planner a longer `horizon` (`large_levels.yaml` uses 250), because its default of 30 is shorter than any route there.
 - **`monitor.known_rules`** can name rules from any of the listed levels. Each level's monitor is told only the ones its own intent has, and a name that no listed level has is an error.
@@ -150,6 +156,7 @@ There's a ready-made SARSA vs Q-learning comparison, one for the planners (A\*, 
 python -m gridlock.eval.runner experiments/sarsa_vs_q.yaml runs/sarsa_vs_q/results.jsonl
 python -m gridlock.eval.runner experiments/planners.yaml runs/planners/results.jsonl
 python -m gridlock.eval.runner experiments/all_levels.yaml runs/all_levels/results.jsonl
+python -m gridlock.eval.runner experiments/deep_vs_tabular.yaml runs/deep_vs_tabular/results.jsonl   # deep vs tabular, ~20 min
 python -m gridlock.eval.runner experiments/large_levels.yaml runs/large_levels/results.jsonl   # 50x50 levels, about an hour
 ```
 
