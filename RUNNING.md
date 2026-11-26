@@ -2,7 +2,7 @@
 
 Every command-line script in the project, with its flags and what it writes, plus the usual order to run them in. For what the project is and how the packages fit together, see [README.md](README.md).
 
-> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. Two levels exist so far, `vase` and `midfield`, in `gridlock/scenarios/levels/`. The online monitor works (see `gridlock/monitor/monitor.py`); its baselines and the A\* and CSP agents are still stubs.
+> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. Two levels exist so far, `vase` and `midfield`, in `gridlock/scenarios/levels/`. The online monitor works (see `gridlock/monitor/monitor.py`), and so do the A\* and CSP planners; the monitor's baselines and the DQN agent are still stubs.
 
 ## Setup
 
@@ -134,17 +134,19 @@ agents:
   - {name: greedy, type: greedy}
 ```
 
-- **`type`** is one of `random`, `greedy`, `astar`, `csp`, `q_learning` or `sarsa`. `astar` and `csp` are still stubs.
+- **`type`** is one of `random`, `greedy`, `astar`, `csp`, `q_learning` or `sarsa`.
 - **`params`** are passed to the agent's constructor.
+- **Planners** (`astar`, `csp`) plan at the start of each episode, modelling every other agent as standing still, and replan whenever the world stops matching the plan. `astar` plays the line with the most total R within `max_steps` (params: `max_expansions`, default 1,000,000). `csp` takes the shortest route to the goal (params: `horizon`, the longest plan it tries, default 30; `max_nodes`, the search budget per horizon, default 20,000; `extra_constraints`, a list of events to rule out, in the same format as an intent `forbid` rule, for example `[{kind: BROKE, target: vase}]`).
 - **`opponents`** (optional, default `random`) sets the agent type for every agent except the first. It can't be a learner.
 - **Learners** are trained on R alone for `train_episodes` episodes, then evaluated greedily for one episode per seed.
 - **`name`** labels the results, so it must be unique.
 - **`train_log_dir`**: for each learner × scenario × seed, the runner writes a `train_log.jsonl` that includes R\*, plus checkpoints, to `<train_log_dir>/<name>_<scenario>_s<seed>/`.
 
-There's a ready-made SARSA vs Q-learning comparison:
+There's a ready-made SARSA vs Q-learning comparison, and one for the planners (A\*, CSP, and CSP constrained by the levels' intent rules):
 
 ```bash
 python -m gridlock.eval.runner experiments/sarsa_vs_q.yaml runs/sarsa_vs_q/results.jsonl
+python -m gridlock.eval.runner experiments/planners.yaml runs/planners/results.jsonl
 ```
 
 ## Summarising results

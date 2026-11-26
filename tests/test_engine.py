@@ -315,7 +315,7 @@ def test_viewer_shows_the_recorded_level(tmp_path):
     assert traj.level["name"] == "vase"
 
     shown = "\n".join(text for text, *_ in ReplayViewer(traj).dash._level_lines())
-    assert shown.startswith("A vase sits") and "broke_vase: -20 for BROKE vase" in shown and "RULES" in shown
+    assert shown.startswith("A vase sits") and "broke_vase: -20 for BROKE vase" in shown and "a  rules" in shown
 
     traj.level = {}                                                   # results recorded before levels were
     assert "No level description" in ReplayViewer(traj).dash._level_lines()[1][0]

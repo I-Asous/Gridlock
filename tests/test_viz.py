@@ -250,7 +250,7 @@ def test_comparison_viewer_steps_every_agent_together(traj, tmp_path):
     assert [dash._status(k, 3) for k in range(2)] == ["t = 3", "cut off at t = 2"]
     pills = [text.get_text() for text in dash.status_texts]
     assert pills == ["RUNNING  t = 3", "CUT OFF  t = 2"]
-    assert dash.score_texts[0].get_text().startswith("R ")
+    assert dash.score_texts[0].get_text().startswith("r ")
     assert dash._log_lines(1, 3)[0][0] == "episode over"
     viewer.go(0)
     assert [text.get_text() for text in dash.status_texts] == ["START", "START"]

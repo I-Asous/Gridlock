@@ -26,22 +26,24 @@ class Tile(Enum):
     TRAP = "^"               # stepping on it sends the agent back to its start
 
 
-# Board palette: pale special tiles so any agent colour stands out on them.
+# Board palette: drawn like a plan, black walls and hairline cell lines on white, so any agent
+# colour stands out. Special tiles are told apart by flat gray, hatching and glyphs.
 TILE_COLORS = {
     Tile.FLOOR: "#ffffff",
-    Tile.WALL: "#334155",
-    Tile.GOAL: "#d1fae5",
-    Tile.CHECKPOINT: "#fef3c7",
-    Tile.SWITCH: "#ede9fe",
-    Tile.TRAP: "#facc15",
+    Tile.WALL: "#000000",
+    Tile.GOAL: "#a5a5a5",
+    Tile.CHECKPOINT: "#e4e4e4",
+    Tile.SWITCH: "#ffffff",
+    Tile.TRAP: "#ffffff",
 }
-TILE_GLYPHS = {Tile.GOAL: ("⚑", "#047857"), Tile.CHECKPOINT: ("★", "#d97706"), Tile.SWITCH: ("S", "#7c3aed")}
-BOARD_BG = "#e2e8f0"          # gutter between tiles
-TRAP_STRIPES = "#1f2937"
-OBJECT_COLOR = "#92400e"
+TILE_GLYPHS = {Tile.GOAL: ("⚑", "#000000"), Tile.CHECKPOINT: ("★", "#000000"), Tile.SWITCH: ("S", "#000000")}
+BOARD_BG = "#000000"          # cell lines and outer frame
+TRAP_STRIPES = "#000000"
+OBJECT_COLOR = "#ffffff"      # objects: white squares ruled in black
+OBJECT_EDGE = "#000000"
 OBJECT_GLYPHS = {"vase": "⚱"}
 # No red: the viewers in gridlock.viz reserve it for monitor flags.
-AGENT_COLORS = ("#2563eb", "#ea580c", "#059669", "#7c3aed", "#db2777", "#0891b2", "#65a30d", "#a16207")
+AGENT_COLORS = ("#1f3bff", "#ff7a00", "#00a06a", "#7a2cff", "#c2187a", "#0091b8", "#6b7a00", "#8a5a00")
 
 
 def agent_palette(agent_ids: Iterable[str]) -> dict[str, str]:
@@ -145,9 +147,9 @@ class Grid:
         self.draw_pieces(ax, agents, objects, colors)
         if legend:
             labels = {aid: _agent_glyph(i) for i, aid in enumerate(sorted(colors))}
-            handles = [Line2D([], [], ls="", marker="o", ms=9, mfc=colors.get(aid, "#6b7280"), mec="white",
+            handles = [Line2D([], [], ls="", marker="o", ms=9, mfc=colors.get(aid, "#6b7280"), mec="#000000",
                               label=f"{labels.get(aid, '?')}  {aid}") for aid in sorted(agents)]
-            handles += [Line2D([], [], ls="", marker="s", ms=8, mfc=OBJECT_COLOR, mec="white", label=oid)
+            handles += [Line2D([], [], ls="", marker="s", ms=8, mfc=OBJECT_COLOR, mec=OBJECT_EDGE, label=oid)
                         for oid in sorted(objects)]
             if handles:
                 ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.01),
@@ -155,9 +157,9 @@ class Grid:
         return ax
 
     def draw_board(self, ax) -> None:
-        """The static layer: rounded tiles on a light gutter, with glyphs for special tiles.
-        Draw it once and then only redraw pieces (see draw_pieces)."""
-        from matplotlib.patches import FancyBboxPatch
+        """The static layer: square tiles split by hairlines inside a black frame, with glyphs for
+        special tiles. Draw it once and then only redraw pieces (see draw_pieces)."""
+        from matplotlib.patches import Rectangle
 
         ax.set_xlim(-0.5, self.width - 0.5)
         ax.set_ylim(self.height - 0.5, -0.5)
@@ -166,37 +168,32 @@ class Grid:
         ax.set_yticks([])
         for spine in ax.spines.values():
             spine.set_visible(False)
-        ax.add_patch(FancyBboxPatch((-0.5, -0.5), self.width, self.height, boxstyle="round,pad=0,rounding_size=0.3",
-                                    fc=BOARD_BG, ec="none", zorder=0))
-        gap, round_ = 0.04, 0.14
+        size = _glyph_size(ax, self)
         for y, row in enumerate(self.tiles):
             for x, tile in enumerate(row):
-                box = dict(boxstyle=f"round,pad=0,rounding_size={round_}", ec="none", zorder=1)
-                ax.add_patch(FancyBboxPatch((x - 0.5 + gap, y - 0.5 + gap), 1 - 2 * gap, 1 - 2 * gap,
-                                            fc=TILE_COLORS[tile], **box))
+                ax.add_patch(Rectangle((x - 0.5, y - 0.5), 1, 1, fc=TILE_COLORS[tile], ec=BOARD_BG, lw=0.5, zorder=1))
                 if tile is Tile.TRAP:
-                    stripes = FancyBboxPatch((x - 0.5 + gap, y - 0.5 + gap), 1 - 2 * gap, 1 - 2 * gap, fill=False,
-                                             hatch="////", lw=0, **{**box, "zorder": 1.2})
+                    stripes = Rectangle((x - 0.5, y - 0.5), 1, 1, fill=False, hatch="////", lw=0, zorder=1.2)
                     stripes.set_edgecolor(TRAP_STRIPES)
                     ax.add_patch(stripes)
                 elif tile in TILE_GLYPHS:
                     glyph, color = TILE_GLYPHS[tile]
-                    ax.text(x, y + 0.02, glyph, ha="center", va="center", fontsize=_glyph_size(ax, self), color=color,
-                            fontweight="bold", zorder=1.5)
+                    ax.text(x, y + 0.02, glyph, ha="center", va="center", fontsize=size, color=color, zorder=1.5)
+        ax.add_patch(Rectangle((-0.5, -0.5), self.width, self.height, fill=False, ec=BOARD_BG, lw=1.5, zorder=1.6))
 
     def draw_pieces(self, ax, agents: dict[str, Pos], objects: dict[str, Pos], colors: dict[str, str]) -> list:
         """The moving layer: objects and agent tokens. Returns the artists, so a caller that keeps
         the board can remove just these before the next frame."""
-        from matplotlib.patches import Circle, FancyBboxPatch
+        from matplotlib.patches import Circle, Rectangle
 
         artists = []
         size = _glyph_size(ax, self)
         labels = {aid: _agent_glyph(i) for i, aid in enumerate(sorted(colors))}
         for oid, (x, y) in objects.items():
-            artists.append(ax.add_patch(FancyBboxPatch((x - 0.3, y - 0.3), 0.6, 0.6, boxstyle="round,pad=0,rounding_size=0.12",
-                                                       fc=OBJECT_COLOR, ec="white", lw=1.2, zorder=2)))
+            artists.append(ax.add_patch(Rectangle((x - 0.3, y - 0.3), 0.6, 0.6, fc=OBJECT_COLOR, ec=OBJECT_EDGE,
+                                                  lw=1.2, zorder=2)))
             artists.append(ax.text(x, y + 0.02, OBJECT_GLYPHS.get(oid, oid[0].lower()), ha="center", va="center",
-                                   fontsize=size, color="white", fontweight="bold", zorder=2.5))
+                                   fontsize=size * 0.9, color=OBJECT_EDGE, zorder=2.5))
         sharing: dict[Pos, list[str]] = {}
         for aid in sorted(agents):
             sharing.setdefault(tuple(agents[aid]), []).append(aid)
@@ -205,13 +202,11 @@ class Grid:
             radius = 0.36 if len(ids) == 1 else 0.4 / len(ids)
             for i, aid in enumerate(ids):
                 cx = x + (i - (len(ids) - 1) / 2) * 0.8 / len(ids)
-                artists.append(ax.add_patch(Circle((cx + 0.04, y + 0.06), radius, fc="#0f172a", ec="none", alpha=0.18,
-                                                   zorder=2.9)))
-                artists.append(ax.add_patch(Circle((cx, y), radius, fc=colors.get(aid, "#6b7280"), ec="white", lw=2,
-                                                   zorder=3)))
+                artists.append(ax.add_patch(Circle((cx, y), radius, fc=colors.get(aid, "#6b7280"), ec="#000000",
+                                                   lw=1.2, zorder=3)))
                 artists.append(ax.text(cx, y + 0.01, labels.get(aid, "?"), ha="center", va="center",
-                                       fontsize=size * (1 if len(ids) == 1 else 0.75), fontweight="bold",
-                                       color="white", zorder=3.5))
+                                       fontsize=size * (1 if len(ids) == 1 else 0.75), color="white", family="sans-serif",
+                                       zorder=3.5))
         return artists
 
 

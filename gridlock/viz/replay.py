@@ -10,7 +10,7 @@ from matplotlib.widgets import Button, Slider
 from gridlock.viz import theme
 from gridlock.viz.compare import ComparisonDashboard, figure_size
 from gridlock.viz.panels import Dashboard
-from gridlock.viz.theme import ACCENT, ACCENT_DARK, CARD_EDGE, MUTED, Layout, themed
+from gridlock.viz.theme import ACCENT, ACCENT_DARK, GRIDLINE, INK, MUTED, Layout, themed
 
 
 class ReplayViewer:
@@ -44,20 +44,22 @@ class ReplayViewer:
         card = L.card(m, y, L.w - 2 * m, h)
         button_ax = L.axes(m + 0.12, y + 0.08, 1.0, h - 0.16)
         slider_ax = L.axes(m + 1.4, y + 0.14, L.w - 2 * m - 5.4, h - 0.28)
-        self.button = Button(button_ax, "▶  Play", color=ACCENT, hovercolor=ACCENT_DARK)
+        self.button = Button(button_ax, "▶  play", color=ACCENT, hovercolor=ACCENT_DARK)
         self.button.label.set_color("white")
-        self.button.label.set_fontweight("bold")
         for spine in button_ax.spines.values():
             spine.set_visible(False)
         self.button.on_clicked(lambda _event: self.toggle())
         self.slider = Slider(slider_ax, "", 0, max(self.last, 1), valinit=0, valstep=1, color=ACCENT,
-                             track_color=CARD_EDGE, initcolor="none",
-                             handle_style={"facecolor": "white", "edgecolor": ACCENT, "size": 13})
-        self.slider.valtext.set_color(MUTED)
-        self.slider.valtext.set_fontweight("bold")
+                             track_color=GRIDLINE, initcolor="none",
+                             handle_style={"facecolor": "white", "edgecolor": INK, "size": 12})
+        handle = getattr(self.slider, "_handle", None)
+        if handle is not None:
+            handle.set_marker("s")                   # square handle; matplotlib only offers a circle option
+            handle.set_markeredgewidth(1.2)
+        self.slider.valtext.set_color(INK)
         self.slider.on_changed(self._on_slider)
-        hint = L.text(L.w - m - 0.2, y + h / 2, "←  →  step     space  play / pause     home / end  jump",
-                      fontsize=8, color=MUTED, ha="right", va="center")
+        hint = L.text(L.w - m - 0.2, y + h / 2, "← →  step   /   space  play·pause   /   home end  jump",
+                      fontsize=7.5, color=MUTED, ha="right", va="center")
         self._controls = (*card, slider_ax, button_ax, hint)
 
     def go(self, i: int) -> None:
@@ -71,7 +73,7 @@ class ReplayViewer:
             self.timer.start()
         else:
             self.timer.stop()
-        self.button.label.set_text("❚❚  Pause" if self.playing else "▶  Play")
+        self.button.label.set_text("❚❚  pause" if self.playing else "▶  play")
         self.fig.canvas.draw_idle()
 
     def show(self) -> None:
