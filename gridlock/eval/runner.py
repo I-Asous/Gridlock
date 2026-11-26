@@ -132,7 +132,7 @@ def run_experiment(config_path: str, out_path: str) -> None:
 
         scenarios: [vase]
         seeds: [0, 1, 2]
-        max_steps: 100                  # optional, default 100
+        max_steps: 100                  # optional, default 100; a level's own max_steps overrides it
         train_log_dir: runs/sarsa_vs_q  # optional: keep each learner's train_log.jsonl + checkpoints
         monitor: {divergence_threshold: 5.0, known_rules: [broke_vase]}   # optional; omit to record no flags
         agents:
@@ -146,6 +146,9 @@ def run_experiment(config_path: str, out_path: str) -> None:
     fresh world (R* is logged beside R when `train_log_dir` is set), then evaluated greedily for
     one episode with the same seed. The Trajectory's `agent` field is the spec's `name`, so
     results group by spec rather than by class.
+
+    `monitor.known_rules` may name rules from any of the listed levels: each level's monitor is
+    told the ones its own intent has (see level_monitor_config), and a name no level has is an error.
     """
     with open(config_path) as f:
         config = yaml.safe_load(f)
@@ -160,6 +163,14 @@ def run_experiment(config_path: str, out_path: str) -> None:
     if len({spec["name"] for spec in specs}) != len(specs):
         raise ValueError("agent spec names must be unique")
 
+    monitor_config = config.get("monitor")
+    if monitor_config:
+        scenarios = [load_scenario(name) for name in config["scenarios"]]
+        everywhere = {rule["name"] for s in scenarios for rule in s.intent_config.get("forbid") or []}
+        unknown = sorted(set(monitor_config.get("known_rules") or []) - everywhere)
+        if unknown:
+            raise ValueError(f"monitor known_rules not in any listed scenario's intent: {unknown}")
+
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as out:
         for scenario_name in config["scenarios"]:
@@ -171,8 +182,19 @@ def run_experiment(config_path: str, out_path: str) -> None:
                     out.flush()
 
 
+def level_monitor_config(monitor_config: Optional[dict], scenario) -> Optional[dict]:
+    """The experiment's monitor config for one level: `known_rules` keeps only the rules that level's
+    intent has, so one config can cover levels with different rules. None stays None."""
+    if not monitor_config or "known_rules" not in monitor_config:
+        return monitor_config
+    names = {rule["name"] for rule in scenario.intent_config.get("forbid") or []}
+    known = [rule for rule in monitor_config.get("known_rules") or [] if rule in names]
+    return {**monitor_config, "known_rules": known}
+
+
 def _run_spec(scenario, spec: dict, seed: int, max_steps: int, monitor_config: Optional[dict],
               train_dir: Optional[Path]) -> Trajectory:
+    max_steps = getattr(scenario, "max_steps", None) or max_steps     # a level's own limit wins
     agent_ids = sorted(scenario.agents)
     learner_id, other_ids = agent_ids[0], agent_ids[1:]
     intent = IntentFn(scenario.intent_config)
@@ -190,6 +212,7 @@ def _run_spec(scenario, spec: dict, seed: int, max_steps: int, monitor_config: O
         learner.training = False
 
     world = GridWorld(scenario, max_steps=max_steps)
+    monitor_config = level_monitor_config(monitor_config, scenario)
     monitor = Monitor(intent, **monitor_config) if monitor_config else None
     traj = run_episode(world, {learner_id: learner, **opponents()}, monitor, intent, seed)
     traj.agent = spec["name"]

@@ -1,7 +1,8 @@
 """Replay recorded episodes.
 
     python -m gridlock.viz results.jsonl --list                     # list the episodes in the file
-    python -m gridlock.viz results.jsonl                            # every agent side by side (first level, first seed)
+    python -m gridlock.viz results.jsonl                            # choose a level, then compare its agents
+    python -m gridlock.viz results.jsonl --no-picker                # skip the level screen: first level, first seed
     python -m gridlock.viz results.jsonl --scenario vase --seed 2   # every agent on that level and seed
     python -m gridlock.viz results.jsonl -e 3                       # one episode in detail
     python -m gridlock.viz results.jsonl -e 3 --compare             # every agent on episode 3's level and seed
@@ -9,29 +10,12 @@
 """
 
 import argparse
+from pathlib import Path
 
 from gridlock.eval.runner import load_trajectories
+from gridlock.viz.selection import pick_comparison
 
-
-def pick_comparison(trajectories, scenario=None, seed=None) -> list:
-    """One trajectory per agent name (the first in the file) for one scenario and seed. Missing
-    scenario or seed: the first one in the file."""
-    if scenario is None:
-        scenario = trajectories[0].scenario
-    on_level = [tr for tr in trajectories if tr.scenario == scenario]
-    if not on_level:
-        raise ValueError(f"no episodes for scenario {scenario!r}; scenarios in the file: "
-                         f"{', '.join(dict.fromkeys(tr.scenario for tr in trajectories))}")
-    if seed is None:
-        seed = on_level[0].seed
-    picked = {}
-    for tr in on_level:
-        if tr.seed == seed:
-            picked.setdefault(tr.agent, tr)
-    if not picked:
-        raise ValueError(f"no episodes for scenario {scenario!r} with seed {seed}; seeds: "
-                         f"{', '.join(str(s) for s in dict.fromkeys(tr.seed for tr in on_level))}")
-    return list(picked.values())
+__all__ = ["main", "pick_comparison"]
 
 
 def main(argv=None) -> None:
@@ -45,11 +29,18 @@ def main(argv=None) -> None:
     parser.add_argument("--scenario", help="level to compare agents on (default: the first in the file)")
     parser.add_argument("--seed", type=int, help="seed to compare agents on (default: the level's first)")
     parser.add_argument("--list", action="store_true", help="list the episodes in the file and exit")
+    parser.add_argument("--no-picker", action="store_true",
+                        help="open the comparison straight away instead of the level screen")
     parser.add_argument("--save", metavar="PATH",
                         help="save instead of opening a window: .gif for the whole episode, .png for one frame")
     parser.add_argument("--frame", type=int, help="frame to save with a .png --save (default: last)")
     args = parser.parse_args(argv)
 
+    if not Path(args.results).is_file():
+        found = sorted(str(path) for path in Path(".").glob("runs/**/*.jsonl") if path.name != "train_log.jsonl")
+        hint = ("; results files under runs/: " + ", ".join(found)) if found else \
+            "; write one with python -m gridlock.eval.runner CONFIG.yaml OUT.jsonl"
+        parser.error(f"no such file: {args.results}{hint}")
     trajectories = load_trajectories(args.results)
     if not trajectories:
         parser.error(f"no episodes in {args.results}")
@@ -65,6 +56,12 @@ def main(argv=None) -> None:
         import matplotlib
         matplotlib.use("Agg")
     from gridlock.viz.replay import ComparisonViewer, ReplayViewer
+
+    choosing = args.episode is None and args.scenario is None and args.seed is None
+    if choosing and not args.save and not args.no_picker:
+        from gridlock.viz.picker import LevelPicker
+        LevelPicker(trajectories, source=args.results).show()
+        return
 
     if args.episode is not None and not args.compare:
         viewer = ReplayViewer(trajectories[args.episode])

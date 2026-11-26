@@ -281,3 +281,97 @@ def test_viewers_fit_a_laptop_screen_and_refit_on_resize(traj):
         viewer.fig.set_size_inches(11, 6.5)
         viewer._on_resize(None)                                   # redraws at the new size, same frame
         assert viewer.frame == 2 and viewer._size == (11.0, 6.5)
+
+
+def _results(traj, tmp_path):
+    trajs = [_relabel(traj, "q", 0), _relabel(traj, "sarsa", 0), _relabel(traj, "q", 1),
+             _relabel(traj, "q", 0, scenario="other")]
+    path = tmp_path / "results.jsonl"
+    path.write_text("".join(tr.to_json() + "\n" for tr in trajs))
+    return trajs, path
+
+
+def test_level_entries_cover_the_file_then_unrecorded_shipped_levels(traj):
+    from gridlock.scenarios.loader import available_levels
+    from gridlock.viz.selection import level_entries
+
+    trajs = [_relabel(traj, "q", 0), _relabel(traj, "sarsa", 0), _relabel(traj, "q", 1),
+             _relabel(traj, "q", 0, scenario="vase")]
+    entries = level_entries(trajs)
+    assert [e["name"] for e in entries][:2] == ["fake", "vase"]
+    fake = entries[0]
+    assert fake["recorded"] and fake["agent_names"] == ["q", "sarsa"] and fake["seeds"] == [0, 1]
+    assert fake["episodes"] == 3 and fake["loophole_episodes"] == 3 and fake["flagged_episodes"] == 3
+    shipped = {e["name"]: e for e in entries[2:]}
+    assert set(shipped) == set(available_levels()) - {"vase"}
+    assert all(not e["recorded"] and e["grid_rows"] for e in shipped.values())
+    assert [e["name"] for e in level_entries(trajs, include_shipped=False)] == ["fake", "vase"]
+
+
+def test_picker_opens_a_level_and_comes_back(traj, tmp_path):
+    import matplotlib.pyplot as plt
+    from matplotlib.backend_bases import KeyEvent, MouseEvent
+    from gridlock.viz.picker import LevelPicker
+
+    trajs, _ = _results(traj, tmp_path)
+    picker = LevelPicker(trajs, source="results.jsonl", include_shipped=False)
+    assert [card["name"] for card in picker.cards] == ["fake", "other"]
+    assert [chip.seed for chip in picker.cards[0]["chips"]] == [0, 1]
+
+    picker.fig.canvas.draw()                                       # lay out the chips before clicking them
+    chip = picker.cards[0]["chips"][1]
+    box = chip.get_window_extent()
+    cx, cy = (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2
+    picker.fig.canvas.callbacks.process("button_press_event",
+                                        MouseEvent("button_press_event", picker.fig.canvas, cx, cy, button=1))
+    viewer = picker.viewer
+    assert {(tr.scenario, tr.seed, tr.agent) for tr in viewer.dash.trajs} == {("fake", 1, "q")}
+    assert not plt.fignum_exists(picker.fig.number)                 # the picker window closed
+
+    viewer.fig.canvas.callbacks.process("key_press_event", KeyEvent("key_press_event", viewer.fig.canvas, "escape"))
+    assert picker.viewer is None and plt.fignum_exists(picker.fig.number)
+    assert not plt.fignum_exists(viewer.fig.number)
+
+    picker.fig.canvas.callbacks.process("key_press_event", KeyEvent("key_press_event", picker.fig.canvas, "2"))
+    assert [tr.agent for tr in picker.viewer.dash.trajs] == ["q"] and picker.viewer.dash.trajs[0].scenario == "other"
+    plt.close("all")
+
+
+def test_picker_ignores_unrecorded_levels(traj):
+    from gridlock.viz.picker import LevelPicker
+
+    picker = LevelPicker([_relabel(traj, "q")])
+    unrecorded = [k for k, card in enumerate(picker.cards) if not card["recorded"]]
+    assert unrecorded and all(not picker.cards[k]["chips"] for k in unrecorded)
+    picker._on_key(SimpleNamespace(key=str(unrecorded[0] + 1)))
+    assert picker.viewer is None
+
+
+def test_cli_opens_the_level_picker_by_default(traj, tmp_path, monkeypatch):
+    from gridlock.viz import __main__ as cli
+    from gridlock.viz.picker import LevelPicker
+
+    _, path = _results(traj, tmp_path)
+    shown = []
+    monkeypatch.setattr(LevelPicker, "show", lambda self: shown.append([c["name"] for c in self.cards]))
+    cli.main([str(path)])
+    assert shown and shown[0][:2] == ["fake", "other"]
+    monkeypatch.setattr("gridlock.viz.replay.ReplayViewer.show", lambda self: shown.append("compare"))
+    cli.main([str(path), "--no-picker"])
+    cli.main([str(path), "--scenario", "other"])
+    assert shown[1:] == ["compare", "compare"]
+
+
+def test_big_boards_draw_as_one_image():
+    import matplotlib.pyplot as plt
+
+    rows = ["#" * 50] + ["#" + "." * 48 + "#" for _ in range(48)] + ["#" * 50]
+    rows[1] = "#^" + "." * 46 + "G#"
+    fig, ax = plt.subplots()
+    Grid.from_rows(rows).draw_board(ax)
+    assert len(ax.images) == 1
+    assert len(ax.patches) == 2                      # the trap's hatching and the outer frame, not 2,500 cells
+    small, ax_small = plt.subplots()
+    Grid.from_rows(ROWS).draw_board(ax_small)
+    assert not ax_small.images and len(ax_small.patches) > 100
+    plt.close("all")

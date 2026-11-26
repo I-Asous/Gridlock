@@ -16,6 +16,12 @@ def test_level_contains_its_designed_loophole(name):
     assert report.ok, format_report(report)
 
 
+def test_levelcheck_uses_the_levels_own_max_steps():
+    big = load_scenario("expedition")
+    assert big.max_steps == 300 and check_level(big).max_steps == 300
+    assert check_level(load_scenario("vase")).max_steps == 100
+
+
 def vase_spec() -> dict:
     with open(LEVELS_DIR / "vase.yaml") as f:
         return yaml.safe_load(f)

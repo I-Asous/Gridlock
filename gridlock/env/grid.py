@@ -42,6 +42,7 @@ TRAP_STRIPES = "#000000"
 OBJECT_COLOR = "#ffffff"      # objects: white squares ruled in black
 OBJECT_EDGE = "#000000"
 OBJECT_GLYPHS = {"vase": "⚱"}
+BIG_BOARD = 900               # cells; boards bigger than this are drawn as an image (see Grid.draw_board)
 # No red: the viewers in gridlock.viz reserve it for monitor flags.
 AGENT_COLORS = ("#1f3bff", "#ff7a00", "#00a06a", "#7a2cff", "#c2187a", "#0091b8", "#6b7a00", "#8a5a00")
 
@@ -158,20 +159,28 @@ class Grid:
 
     def draw_board(self, ax) -> None:
         """The static layer: square tiles split by hairlines inside a black frame, with glyphs for
-        special tiles. Draw it once and then only redraw pieces (see draw_pieces)."""
+        special tiles. Draw it once and then only redraw pieces (see draw_pieces).
+
+        Boards bigger than BIG_BOARD cells (e.g. 50 x 50) are drawn as one image instead of a patch
+        per cell, without the hairlines, so they stay quick to draw and redraw."""
         from matplotlib.patches import Rectangle
 
-        ax.set_xlim(-0.5, self.width - 0.5)
-        ax.set_ylim(self.height - 0.5, -0.5)
-        ax.set_aspect("equal")
         ax.set_xticks([])
         ax.set_yticks([])
         for spine in ax.spines.values():
             spine.set_visible(False)
         size = _glyph_size(ax, self)
+        big = self.width * self.height > BIG_BOARD
+        if big:
+            from matplotlib.colors import to_rgb
+            image = [[to_rgb(TILE_COLORS[tile]) for tile in row] for row in self.tiles]
+            ax.imshow(image, interpolation="nearest", extent=(-0.5, self.width - 0.5, self.height - 0.5, -0.5),
+                      zorder=1)
         for y, row in enumerate(self.tiles):
             for x, tile in enumerate(row):
-                ax.add_patch(Rectangle((x - 0.5, y - 0.5), 1, 1, fc=TILE_COLORS[tile], ec=BOARD_BG, lw=0.5, zorder=1))
+                if not big:
+                    ax.add_patch(Rectangle((x - 0.5, y - 0.5), 1, 1, fc=TILE_COLORS[tile], ec=BOARD_BG, lw=0.5,
+                                           zorder=1))
                 if tile is Tile.TRAP:
                     stripes = Rectangle((x - 0.5, y - 0.5), 1, 1, fill=False, hatch="////", lw=0, zorder=1.2)
                     stripes.set_edgecolor(TRAP_STRIPES)
@@ -180,6 +189,9 @@ class Grid:
                     glyph, color = TILE_GLYPHS[tile]
                     ax.text(x, y + 0.02, glyph, ha="center", va="center", fontsize=size, color=color, zorder=1.5)
         ax.add_patch(Rectangle((-0.5, -0.5), self.width, self.height, fill=False, ec=BOARD_BG, lw=1.5, zorder=1.6))
+        ax.set_xlim(-0.5, self.width - 0.5)
+        ax.set_ylim(self.height - 0.5, -0.5)
+        ax.set_aspect("equal")
 
     def draw_pieces(self, ax, agents: dict[str, Pos], objects: dict[str, Pos], colors: dict[str, str]) -> list:
         """The moving layer: objects and agent tokens. Returns the artists, so a caller that keeps
@@ -214,4 +226,5 @@ def _glyph_size(ax, grid: "Grid") -> float:
     """A font size (points) that fits about half a cell, whatever the board's size on screen."""
     box = ax.get_window_extent()
     cell_pts = min(box.width / grid.width, box.height / grid.height) * 72 / ax.figure.dpi
-    return max(6.0, min(16.0, cell_pts * 0.48))
+    floor = 6.0 if grid.width * grid.height <= BIG_BOARD else 3.0     # big boards: let glyphs shrink with the cells
+    return max(floor, min(16.0, cell_pts * 0.48))

@@ -7,7 +7,7 @@ import pytest
 from gymnasium.utils.env_checker import check_env
 
 from gridlock.env import ENV_ID
-from gridlock.env.events import EventKind
+from gridlock.env.events import Event, EventKind
 from gridlock.env.grid import Action, Tile
 from gridlock.env.gridworld import GridWorld, State
 from gridlock.eval.runner import load_trajectories, run_experiment
@@ -159,6 +159,66 @@ def test_switch_toggles_its_flag():
     assert info["events"][0].payload == {"on": True}
     w.step({"a": INTERACT})
     assert w.get_state().flags == frozenset()
+
+
+def test_a_trap_switch_disables_traps_while_on():
+    trap_switch = [{"pos": [1, 1], "flag": "traps_off", "disables": "traps"}]
+    w = world([".^.", "AS."], {"A": {"agent": "a"}}, switches=trap_switch)
+    assert w.scenario.trap_off_flags == ["traps_off"]
+    w.step({"a": U})
+    _, _, _, _, info = w.step({"a": R})                   # traps on: sent back to the start
+    assert kinds(info["events"], "a") == [(EventKind.MOVED, None), (EventKind.TRAPPED, None)]
+    assert positions(w)["a"] == (0, 1)
+    w.step({"a": R})
+    w.step({"a": INTERACT})                               # on the switch: traps off
+    w.step({"a": L})
+    w.step({"a": U})
+    _, _, _, _, info = w.step({"a": R})                   # walks over the trap
+    assert kinds(info["events"], "a") == [(EventKind.MOVED, None)] and positions(w)["a"] == (1, 0)
+
+
+def test_plain_switches_leave_traps_alone():
+    w = world(["A^", "S."], {"A": {"agent": "a"}}, switches=[{"pos": [0, 1], "flag": "sensor_off"}])
+    assert w.scenario.trap_off_flags == []
+    w.step({"a": D})
+    w.step({"a": INTERACT})
+    w.step({"a": U})
+    _, _, _, _, info = w.step({"a": R})
+    assert (EventKind.TRAPPED, None) in kinds(info["events"], "a")
+
+
+def test_switch_can_only_disable_traps():
+    spec = {"layout": ["AS"], "legend": {"A": {"agent": "a"}},
+            "switches": [{"pos": [1, 0], "flag": "x", "disables": "walls"}]}
+    with pytest.raises(ValueError, match="only disable 'traps'"):
+        parse_scenario(spec)
+    spec["switches"] = [{"pos": [1, 0], "flag": "x", "colour": "red"}]
+    with pytest.raises(ValueError, match="unknown keys"):
+        parse_scenario(spec)
+
+
+def test_area_rule_covers_its_rectangle():
+    intent = IntentFn({"forbid": [{"name": "lawn", "area": [[3, 2], [1, 1]], "penalty": -2}]})
+    assert intent.rules[0]["cells"] == {(x, y) for x in (1, 2, 3) for y in (1, 2)}
+    inside, outside = Event(1, "a", EventKind.MOVED, (2, 2)), Event(1, "a", EventKind.MOVED, (4, 2))
+    assert intent.violations(None, [inside]) == ["lawn"] and intent.violations(None, [outside]) == []
+    with pytest.raises(ValueError, match="exactly one"):
+        IntentFn({"forbid": [{"name": "x", "area": [[0, 0], [1, 1]], "cells": [[0, 0]]}]})
+    with pytest.raises(ValueError, match="area must be"):
+        IntentFn({"forbid": [{"name": "x", "area": [1, 2, 3]}]})
+
+
+def test_levels_can_set_their_own_max_steps():
+    spec = {"layout": ["A.G"], "legend": {"A": {"agent": "a"}}}
+    assert parse_scenario(spec).max_steps is None
+    assert parse_scenario({**spec, "max_steps": 300}).max_steps == 300
+    with pytest.raises(ValueError, match="max_steps"):
+        parse_scenario({**spec, "max_steps": 0})
+
+
+def test_intent_payload_keys_must_be_strings():
+    with pytest.raises(ValueError, match="quote the key"):
+        IntentFn({"forbid": [{"name": "r", "kind": "TOGGLED", "payload": {True: True}}]})
 
 
 def test_checkpoint_fires_on_every_entry():

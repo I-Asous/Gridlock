@@ -1,7 +1,7 @@
 """Step through a recorded episode: slider, play/pause, arrow keys, and GIF/PNG export."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
@@ -14,16 +14,21 @@ from gridlock.viz.theme import ACCENT, ACCENT_DARK, GRIDLINE, INK, MUTED, Layout
 
 
 class ReplayViewer:
-    """Interactive viewer for one Trajectory. Keys: ←/→ step, space play/pause, home/end jump."""
+    """Interactive viewer for one Trajectory. Keys: ←/→ step, space play/pause, home/end jump.
 
-    def __init__(self, traj, interval_ms: int = 300):
-        self._setup(lambda fig: Dashboard(traj, fig), (14, 8), interval_ms)
+    With `on_back`, the control bar gets a "← levels" button (also esc) that calls it and closes
+    this window; the level picker uses it to come back."""
 
-    def _setup(self, make_dashboard, figsize, interval_ms: int) -> None:
+    def __init__(self, traj, interval_ms: int = 300, on_back: Optional[Callable[[], None]] = None):
+        self._setup(lambda fig: Dashboard(traj, fig), (14, 8), interval_ms, on_back)
+
+    def _setup(self, make_dashboard, figsize, interval_ms: int, on_back=None) -> None:
+        self.on_back = on_back
         with themed():
             self.fig = plt.figure(figsize=figsize)
             if self.fig.canvas.manager is not None:
                 self.fig.canvas.manager.set_window_title("Gridlock replay")
+            self.fig._gridlock_owner = self           # callbacks hold only weak refs to bound methods
             self.dash = make_dashboard(self.fig)
             self.last = self.dash.n_frames - 1
             self.frame = 0
@@ -38,12 +43,24 @@ class ReplayViewer:
         self.dash.draw(0)
 
     def _build_controls(self) -> None:
-        """A bar along the bottom: play button, frame slider and key hints. Hidden when saving."""
+        """A bar along the bottom: back button (with on_back), play button, frame slider and key
+        hints. Hidden when saving."""
         L = Layout(self.fig)
         m, y, h = 0.25, L.h - 0.6, 0.48
         card = L.card(m, y, L.w - 2 * m, h)
-        button_ax = L.axes(m + 0.12, y + 0.08, 1.0, h - 0.16)
-        slider_ax = L.axes(m + 1.4, y + 0.14, L.w - 2 * m - 5.4, h - 0.28)
+        extra = ()
+        x = m + 0.12
+        if self.on_back is not None:
+            back_ax = L.axes(x, y + 0.08, 1.0, h - 0.16)
+            self.back_button = Button(back_ax, "←  levels", color="white", hovercolor=GRIDLINE)
+            self.back_button.label.set_color(INK)
+            for spine in back_ax.spines.values():          # the theme hides top and right spines
+                spine.set_visible(True)
+                spine.set_color(INK)
+            self.back_button.on_clicked(lambda _event: self.back())
+            extra, x = (back_ax,), x + 1.12
+        button_ax = L.axes(x, y + 0.08, 1.0, h - 0.16)
+        slider_ax = L.axes(x + 1.28, y + 0.14, L.w - 2 * m - 5.4 - (x - m - 0.12) * 2, h - 0.28)
         self.button = Button(button_ax, "▶  play", color=ACCENT, hovercolor=ACCENT_DARK)
         self.button.label.set_color("white")
         for spine in button_ax.spines.values():
@@ -58,9 +75,19 @@ class ReplayViewer:
             handle.set_markeredgewidth(1.2)
         self.slider.valtext.set_color(INK)
         self.slider.on_changed(self._on_slider)
-        hint = L.text(L.w - m - 0.2, y + h / 2, "← →  step   /   space  play·pause   /   home end  jump",
-                      fontsize=7.5, color=MUTED, ha="right", va="center")
-        self._controls = (*card, slider_ax, button_ax, hint)
+        hints = "← →  step   /   space  play·pause   /   home end  jump"
+        if self.on_back is not None:
+            hints += "   /   esc  levels"
+        hint = L.text(L.w - m - 0.2, y + h / 2, hints, fontsize=7.5, color=MUTED, ha="right", va="center")
+        self._controls = (*card, *extra, slider_ax, button_ax, hint)
+
+    def back(self) -> None:
+        """Go back to the level picker: call on_back, then close this window."""
+        if self.on_back is None:
+            return
+        self.timer.stop()
+        self.on_back()
+        plt.close(self.fig)
 
     def go(self, i: int) -> None:
         self.slider.set_val(max(0, min(i, self.last)))   # redraws through _on_slider
@@ -119,6 +146,8 @@ class ReplayViewer:
         jumps = {"right": self.frame + 1, "left": self.frame - 1, "home": 0, "end": self.last}
         if event.key == " ":
             self.toggle()
+        elif event.key == "escape":
+            self.back()
         elif event.key in jumps:
             self.go(jumps[event.key])
 
@@ -127,6 +156,6 @@ class ComparisonViewer(ReplayViewer):
     """Several trajectories of the same level side by side, stepped together (see
     gridlock.viz.compare). Same controls and save() as ReplayViewer."""
 
-    def __init__(self, trajs, interval_ms: int = 300):
+    def __init__(self, trajs, interval_ms: int = 300, on_back: Optional[Callable[[], None]] = None):
         trajs = list(trajs)
-        self._setup(lambda fig: ComparisonDashboard(trajs, fig), figure_size(len(trajs)), interval_ms)
+        self._setup(lambda fig: ComparisonDashboard(trajs, fig), figure_size(len(trajs)), interval_ms, on_back)

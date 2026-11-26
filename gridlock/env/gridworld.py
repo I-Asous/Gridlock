@@ -33,7 +33,7 @@ class GridWorld:
         self.scenario = scenario
         self.grid: Grid = scenario.grid
         self.referee = Referee(self.grid, getattr(scenario, "object_props", None), getattr(scenario, "switches", None),
-                               starts=scenario.agents)
+                               starts=scenario.agents, trap_off_flags=getattr(scenario, "trap_off_flags", ()))
         self.reward_fn = scenario.reward_fn
         self.max_steps = max_steps
         self.encoder = ObservationEncoder.for_scenario(scenario)

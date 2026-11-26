@@ -4,7 +4,7 @@ enough for the tabular learners.
 
     python -m gridlock.eval.levelcheck                 # every level in gridlock/scenarios/levels
     python -m gridlock.eval.levelcheck vase lawn       # just these
-    python -m gridlock.eval.levelcheck --max-steps 60  # with another step limit
+    python -m gridlock.eval.levelcheck --max-steps 60  # with another step limit (default: the level's, or 100)
 
 How it works: every state the studied agent (the first by sorted id, as in the runner) can reach
 is enumerated with any other agents standing still. Planning backwards over the step limit then
@@ -64,8 +64,11 @@ class LevelReport:
         return self.best.R - self.clean.R
 
 
-def check_level(scenario: Scenario, max_steps: int = 100, min_gap: float = MIN_GAP,
+def check_level(scenario: Scenario, max_steps: Optional[int] = None, min_gap: float = MIN_GAP,
                 max_states: int = MAX_TABULAR_STATES) -> LevelReport:
+    """max_steps: None uses the level's own max_steps, or 100 when it sets none."""
+    if max_steps is None:
+        max_steps = getattr(scenario, "max_steps", None) or 100
     world = GridWorld(scenario, max_steps=max_steps)
     intent = IntentFn(scenario.intent_config)
     agent_ids = sorted(scenario.agents)
@@ -219,7 +222,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="python -m gridlock.eval.levelcheck",
                                      description="Check that levels contain the loopholes they are designed to.")
     parser.add_argument("levels", nargs="*", help="level names or .yaml paths (default: every level)")
-    parser.add_argument("--max-steps", type=int, default=100)
+    parser.add_argument("--max-steps", type=int, default=None,
+                        help="step limit (default: each level's own max_steps, or 100)")
     parser.add_argument("--min-gap", type=float, default=MIN_GAP)
     args = parser.parse_args(argv)
 
