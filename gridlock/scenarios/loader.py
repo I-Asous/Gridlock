@@ -15,6 +15,7 @@ A level file looks like this (see levels/vase.yaml for a full example):
       vase: {pushable: true, breakable: true}
     switches:                     # optional: INTERACT on an S tile toggles this state flag
       - {pos: [3, 1], flag: sensor_off}
+      - {pos: [1, 2], flag: traps_off, disables: traps}   # while this flag is on, traps do nothing
     flags: []                     # extra state flags agents observe (switch flags are added)
     reward: {step: -1, goal: 10}  # R, see gridlock.rules.reward.RewardFn
     intent:                       # R*, see gridlock.intent.intent.IntentFn; read only by monitor / eval
@@ -24,6 +25,7 @@ A level file looks like this (see levels/vase.yaml for a full example):
     loopholes:                    # the designed loopholes; names match intent rules
       - {name: broke_vase, description: "..."}
     control: false                # true for a level with no profitable loophole (checks false positives)
+    max_steps: 300                # optional: this level's step limit, overriding the experiment's (for big levels)
 
 `python -m gridlock.eval.levelcheck` checks that a level's loopholes really pay off under R.
 
@@ -32,7 +34,7 @@ This module never imports gridlock.intent: it passes the intent section through 
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import yaml
 
@@ -45,7 +47,8 @@ LEVELS_DIR = Path(__file__).parent / "levels"
 TILE_CHARS = {tile.value for tile in Tile}
 OBJECT_DEFAULTS = {"pushable": True, "breakable": False}
 LEVEL_KEYS = {"name", "description", "layout", "legend", "objects", "switches", "flags", "reward", "intent",
-              "loopholes", "control"}
+              "loopholes", "control", "max_steps"}
+SWITCH_KEYS = {"pos", "flag", "disables"}
 
 
 @dataclass
@@ -61,6 +64,8 @@ class Scenario:
     switches: dict[Pos, str] = field(default_factory=dict)       # switch tile position -> flag it toggles
     description: str = ""
     control: bool = False                   # no profitable loophole by design
+    trap_off_flags: list[str] = field(default_factory=list)   # flags that, while on, disable every trap
+    max_steps: Optional[int] = None         # the level's own step limit; None: the caller's default
 
 
 def available_levels() -> list[str]:
@@ -140,11 +145,21 @@ def parse_scenario(spec: dict[str, Any], default_name: str = "level") -> Scenari
         object_props[oid].update({key: bool(value) for key, value in (props or {}).items()})
 
     switches: dict[Pos, str] = {}
+    trap_off_flags: list[str] = []
     for entry in spec.get("switches") or []:
         pos = tuple(entry["pos"])
         if len(pos) != 2 or not grid.in_bounds(pos) or grid.tile_at(pos) is not Tile.SWITCH:
             raise ValueError(f"level {name!r}: switch at {list(pos)} is not on an S tile")
+        bad = set(entry) - SWITCH_KEYS
+        if bad:
+            raise ValueError(f"level {name!r}: unknown keys for the switch at {list(pos)}: {sorted(bad)}")
         switches[pos] = str(entry["flag"])
+        disables = entry.get("disables")
+        if disables is not None:
+            if disables != "traps":
+                raise ValueError(f"level {name!r}: switch at {list(pos)} can only disable 'traps', got {disables!r}")
+            if switches[pos] not in trap_off_flags:
+                trap_off_flags.append(switches[pos])
 
     flags = list(dict.fromkeys([*(spec.get("flags") or []), *switches.values()]))
     return Scenario(
@@ -159,4 +174,14 @@ def parse_scenario(spec: dict[str, Any], default_name: str = "level") -> Scenari
         switches=switches,
         description=spec.get("description", ""),
         control=bool(spec.get("control", False)),
+        trap_off_flags=trap_off_flags,
+        max_steps=_max_steps(spec.get("max_steps"), name),
     )
+
+
+def _max_steps(value, name: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"level {name!r}: max_steps must be a positive integer, got {value!r}")
+    return value

@@ -17,7 +17,7 @@ import yaml
 
 from gridlock.agents.astar import AStarAgent
 from gridlock.agents.csp import CSPAgent
-from gridlock.agents.rl import ALGORITHMS
+from gridlock.agents.rl import ALGORITHMS, DEEP_ALGORITHMS
 from gridlock.agents.rl.train import train_agent
 from gridlock.agents.scripted import GreedyAgent, RandomAgent
 from gridlock.env.gridworld import GridWorld
@@ -29,8 +29,10 @@ from gridlock.scenarios.describe import describe_scenario
 
 # Config `type` -> agent class. Learners (ALGORITHMS) are trained before they are evaluated.
 AGENT_TYPES = {"random": RandomAgent, "greedy": GreedyAgent, "astar": AStarAgent, "csp": CSPAgent,
-               "q_learning": ALGORITHMS["q"], "sarsa": ALGORITHMS["sarsa"]}
-LEARNERS = {"q_learning", "sarsa"}
+               "q_learning": ALGORITHMS["q"], "sarsa": ALGORITHMS["sarsa"], **DEEP_ALGORITHMS}
+LEARNERS = {"q_learning", "sarsa"}                 # tabular: trained for `train_episodes`
+DEEP_LEARNERS = set(DEEP_ALGORITHMS)               # Stable-Baselines3: trained for `train_steps`
+SELF_PLAY = "learner"                              # `opponents: learner`: every agent learns (needs PettingZoo)
 
 
 @dataclass
@@ -132,7 +134,7 @@ def run_experiment(config_path: str, out_path: str) -> None:
 
         scenarios: [vase]
         seeds: [0, 1, 2]
-        max_steps: 100                  # optional, default 100
+        max_steps: 100                  # optional, default 100; a level's own max_steps overrides it
         train_log_dir: runs/sarsa_vs_q  # optional: keep each learner's train_log.jsonl + checkpoints
         monitor: {divergence_threshold: 5.0, known_rules: [broke_vase]}   # optional; omit to record no flags
         agents:
@@ -141,11 +143,17 @@ def run_experiment(config_path: str, out_path: str) -> None:
           - {name: greedy, type: greedy}
 
     Each spec controls the scenario's first agent (by sorted id). Every other agent is an
-    `opponents` type (default "random", seeded per run). `type` is a key of AGENT_TYPES and
-    `params` go to its constructor. Learners are trained on R alone for `train_episodes` on a
-    fresh world (R* is logged beside R when `train_log_dir` is set), then evaluated greedily for
-    one episode with the same seed. The Trajectory's `agent` field is the spec's `name`, so
+    `opponents` type (default "random", seeded per run), or, with `opponents: learner` and a
+    tabular learner type, its own learner of the same type: all agents then train together as
+    independent learners on the PettingZoo view of the level (needs pettingzoo). `type` is a key of AGENT_TYPES and
+    `params` go to its constructor. Learners are trained on R alone on a fresh world (R* is
+    logged beside R when `train_log_dir` is set), then evaluated greedily for one episode with the
+    same seed: the tabular ones (q_learning, sarsa) for `train_episodes` episodes, the deep ones
+    (dqn, ppo, a2c, which need Stable-Baselines3) for `train_steps` environment steps. The Trajectory's `agent` field is the spec's `name`, so
     results group by spec rather than by class.
+
+    `monitor.known_rules` may name rules from any of the listed levels: each level's monitor is
+    told the ones its own intent has (see level_monitor_config), and a name no level has is an error.
     """
     with open(config_path) as f:
         config = yaml.safe_load(f)
@@ -153,12 +161,24 @@ def run_experiment(config_path: str, out_path: str) -> None:
     train_dir = Path(config["train_log_dir"]) if config.get("train_log_dir") else None
     specs = config["agents"]
     for spec in specs:
-        for key in ("type", *(("opponents",) if "opponents" in spec else ())):
+        if spec.get("opponents") == SELF_PLAY:
+            if spec["type"] not in LEARNERS:
+                raise ValueError(f"agent spec {spec.get('name')!r}: opponents: {SELF_PLAY} needs a tabular "
+                                 f"learner type ({', '.join(sorted(LEARNERS))}), not {spec['type']!r}")
+        for key in ("type", *(("opponents",) if "opponents" in spec and spec["opponents"] != SELF_PLAY else ())):
             kind = spec[key]
-            if kind not in AGENT_TYPES or (key == "opponents" and kind in LEARNERS):
+            if kind not in AGENT_TYPES or (key == "opponents" and kind in LEARNERS | DEEP_LEARNERS):
                 raise ValueError(f"agent spec {spec.get('name')!r}: unsupported {key} {kind!r}")
     if len({spec["name"] for spec in specs}) != len(specs):
         raise ValueError("agent spec names must be unique")
+
+    monitor_config = config.get("monitor")
+    if monitor_config:
+        scenarios = [load_scenario(name) for name in config["scenarios"]]
+        everywhere = {rule["name"] for s in scenarios for rule in s.intent_config.get("forbid") or []}
+        unknown = sorted(set(monitor_config.get("known_rules") or []) - everywhere)
+        if unknown:
+            raise ValueError(f"monitor known_rules not in any listed scenario's intent: {unknown}")
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as out:
@@ -171,8 +191,19 @@ def run_experiment(config_path: str, out_path: str) -> None:
                     out.flush()
 
 
+def level_monitor_config(monitor_config: Optional[dict], scenario) -> Optional[dict]:
+    """The experiment's monitor config for one level: `known_rules` keeps only the rules that level's
+    intent has, so one config can cover levels with different rules. None stays None."""
+    if not monitor_config or "known_rules" not in monitor_config:
+        return monitor_config
+    names = {rule["name"] for rule in scenario.intent_config.get("forbid") or []}
+    known = [rule for rule in monitor_config.get("known_rules") or [] if rule in names]
+    return {**monitor_config, "known_rules": known}
+
+
 def _run_spec(scenario, spec: dict, seed: int, max_steps: int, monitor_config: Optional[dict],
               train_dir: Optional[Path]) -> Trajectory:
+    max_steps = getattr(scenario, "max_steps", None) or max_steps     # a level's own limit wins
     agent_ids = sorted(scenario.agents)
     learner_id, other_ids = agent_ids[0], agent_ids[1:]
     intent = IntentFn(scenario.intent_config)
@@ -181,17 +212,50 @@ def _run_spec(scenario, spec: dict, seed: int, max_steps: int, monitor_config: O
         kind = spec.get("opponents", "random")
         return {aid: _build(kind, aid, {}, seed + i + 1) for i, aid in enumerate(other_ids)}
 
+    if spec.get("opponents") == SELF_PLAY:
+        return _run_independent(scenario, spec, seed, max_steps, monitor_config, train_dir, intent)
+
     learner = _build(spec["type"], learner_id, spec.get("params", {}), seed)
-    if spec["type"] in LEARNERS:
+    if spec["type"] in LEARNERS | DEEP_LEARNERS:
         env = GridlockEnv(GridWorld(scenario, max_steps=max_steps), learner_id, opponents())
         out_dir = train_dir / f"{spec['name']}_{scenario.name}_s{seed}" if train_dir is not None else None
-        train_agent(env, learner, spec.get("train_episodes", 1000), seed, out_dir=out_dir,
-                    intent=intent if out_dir is not None else None)
+        log_intent = intent if out_dir is not None else None
+        if spec["type"] in DEEP_LEARNERS:
+            learner.train(env, spec.get("train_steps", 50_000), seed, out_dir=out_dir, intent=log_intent)
+        else:
+            train_agent(env, learner, spec.get("train_episodes", 1000), seed, out_dir=out_dir, intent=log_intent)
+            learner.training = False
+
+    world = GridWorld(scenario, max_steps=max_steps)
+    monitor_config = level_monitor_config(monitor_config, scenario)
+    monitor = Monitor(intent, **monitor_config) if monitor_config else None
+    traj = run_episode(world, {learner_id: learner, **opponents()}, monitor, intent, seed)
+    traj.agent = spec["name"]
+    traj.monitor = dict(monitor_config or {})
+    return traj
+
+
+def _run_independent(scenario, spec: dict, seed: int, max_steps: int, monitor_config: Optional[dict],
+                     train_dir: Optional[Path], intent) -> Trajectory:
+    """`opponents: learner`: every agent is its own learner of the spec's type. They train together
+    on the PettingZoo view of the level (gridlock.env.pz_env), each on its own R, then play one
+    greedy episode together."""
+    from gridlock.agents.rl.multi import train_independent
+    from gridlock.env.pz_env import GridlockParallelEnv
+
+    learners = {aid: _build(spec["type"], aid, spec.get("params", {}), seed + i)
+                for i, aid in enumerate(sorted(scenario.agents))}
+    out_dir = train_dir / f"{spec['name']}_{scenario.name}_s{seed}" if train_dir is not None else None
+    env = GridlockParallelEnv(GridWorld(scenario, max_steps=max_steps))
+    train_independent(env, learners, spec.get("train_episodes", 1000), seed, out_dir=out_dir,
+                      intent=intent if out_dir is not None else None)
+    for learner in learners.values():
         learner.training = False
 
     world = GridWorld(scenario, max_steps=max_steps)
+    monitor_config = level_monitor_config(monitor_config, scenario)
     monitor = Monitor(intent, **monitor_config) if monitor_config else None
-    traj = run_episode(world, {learner_id: learner, **opponents()}, monitor, intent, seed)
+    traj = run_episode(world, learners, monitor, intent, seed)
     traj.agent = spec["name"]
     traj.monitor = dict(monitor_config or {})
     return traj

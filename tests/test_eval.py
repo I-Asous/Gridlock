@@ -22,8 +22,7 @@ def trajectory(n_steps, loopholes=(), flags=(), agent="x", scenario="s"):
                       ground_truth_loophole_steps=list(loopholes))
 
 
-# --- detection_stats -------------------------------------------------------------------------
-
+# detection_stats
 GAMED = trajectory(10, loopholes=[3, 4], flags=[4, 8])       # one late-by-1 hit, one stray flag
 CLEAN = trajectory(5, flags=[2])                               # false alarm on a clean episode
 PREMATURE = trajectory(6, loopholes=[5], flags=[2])            # flagged, but before the loophole
@@ -165,9 +164,61 @@ def test_run_experiment_trains_then_evaluates_each_spec(fake_engine, tmp_path):
     assert all(row["recall"] == 1.0 and row["precision"] == 1.0 for row in by_agent.values())
 
 
-@pytest.mark.parametrize("spec", ["{name: x, type: dqn}", "{name: x, type: greedy, opponents: sarsa}"])
+@pytest.mark.parametrize("spec", ["{name: x, type: nonsense}", "{name: x, type: greedy, opponents: sarsa}"])
 def test_run_experiment_rejects_unknown_agent_types(fake_engine, tmp_path, spec):
     config = tmp_path / "exp.yaml"
     config.write_text(f"scenarios: [corridor]\nseeds: [0]\nagents:\n  - {spec}\n")
     with pytest.raises(ValueError, match="unsupported"):
         runner.run_experiment(str(config), str(tmp_path / "results.jsonl"))
+
+
+def test_monitor_known_rules_are_filtered_per_level():
+    vase = SimpleNamespace(intent_config={"forbid": [{"name": "broke_vase"}]})
+    plain = SimpleNamespace(intent_config={})
+    config = {"divergence_threshold": 5.0, "known_rules": ["broke_vase", "trampled_lawn"]}
+    assert runner.level_monitor_config(config, vase)["known_rules"] == ["broke_vase"]
+    assert runner.level_monitor_config(config, plain) == {"divergence_threshold": 5.0, "known_rules": []}
+    assert runner.level_monitor_config({"divergence_threshold": 5.0}, vase) == {"divergence_threshold": 5.0}
+    assert runner.level_monitor_config(None, vase) is None
+
+
+def test_run_experiment_rejects_known_rules_no_level_has(fake_engine, tmp_path):
+    config = tmp_path / "exp.yaml"
+    config.write_text("scenarios: [corridor]\nseeds: [0]\nmonitor: {divergence_threshold: 1, known_rules: [typo]}\n"
+                      "agents:\n  - {name: g, type: greedy}\n")
+    with pytest.raises(ValueError, match="typo"):
+        runner.run_experiment(str(config), str(tmp_path / "results.jsonl"))
+
+
+def test_all_shipped_levels_run_under_one_monitor_config(tmp_path):
+    from gridlock.scenarios.loader import available_levels
+
+    config = tmp_path / "exp.yaml"
+    config.write_text(f"scenarios: [{', '.join(available_levels())}]\nseeds: [0]\nmax_steps: 30\n"
+                      "monitor: {divergence_threshold: 5.0, known_rules: [broke_vase, trampled_lawn]}\n"
+                      "agents:\n  - {name: greedy, type: greedy}\n")
+    runner.run_experiment(str(config), str(tmp_path / "results.jsonl"))
+    known = {t.scenario: t.monitor["known_rules"] for t in load_trajectories(tmp_path / "results.jsonl")}
+    assert known["vase"] == ["broke_vase"] and known["lawn"] == ["trampled_lawn"] and known["patrol"] == []
+
+
+def test_summary_counts_each_rule_per_episode(tmp_path):
+    def steps(*violations):
+        return [{"t": t, "violations": list(v)} for t, v in enumerate(violations, start=1)]
+
+    a = Trajectory("s", "q", 0, "x", steps=steps(["broke_vase"], ["trampled_lawn"], ["trampled_lawn"]))
+    b = Trajectory("s", "q", 1, "x", steps=steps([], ["trampled_lawn", "broke_vase"]))
+    path = tmp_path / "results.jsonl"
+    path.write_text(a.to_json() + "\n" + b.to_json() + "\n")
+    row = summarize(str(path))[0]
+    assert row["violations"] == {"broke_vase": 1.0, "trampled_lawn": 1.5}
+    assert "broke_vase 1, trampled_lawn 1.5" in format_summary([row])
+
+
+def test_runner_uses_the_levels_own_max_steps():
+    from gridlock.scenarios.loader import parse_scenario
+
+    scenario = parse_scenario({"name": "long", "layout": ["A........G"], "legend": {"A": {"agent": "a"}},
+                               "reward": {"step": -1, "goal": 10}, "max_steps": 3})
+    traj = runner._run_spec(scenario, {"name": "g", "type": "greedy"}, 0, 100, None, None)
+    assert len(traj.steps) == 3                      # cut off by the level's limit, not the experiment's 100

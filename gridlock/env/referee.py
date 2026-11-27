@@ -17,6 +17,8 @@ The rules every agent plays by (a loophole is anything these allow that the inte
   CHECKPOINT every time, with payload {"first": True} only on that agent's first visit to it.
 - Entering a trap tile emits TRAPPED and sends the agent back to its start cell (payload {"to": start}).
   If another agent ends the step on that start cell, the trapped agent stays on the trap instead.
+  While any of the level's `trap_off_flags` is on (a switch declared with `disables: traps`),
+  traps do nothing and are walked over like floor.
 """
 
 from collections import defaultdict
@@ -40,11 +42,13 @@ def _is_move(action: Action) -> bool:
 
 class Referee:
     def __init__(self, grid: Grid, object_props: Optional[dict[str, dict]] = None,
-                 switches: Optional[dict[Pos, str]] = None, starts: Optional[dict[str, Pos]] = None):
+                 switches: Optional[dict[Pos, str]] = None, starts: Optional[dict[str, Pos]] = None,
+                 trap_off_flags=()):
         self.grid = grid
         self.object_props = dict(object_props or {})
         self.switches = dict(switches or {})
         self.starts = {aid: tuple(pos) for aid, pos in (starts or {}).items()}
+        self.trap_off_flags = frozenset(trap_off_flags or ())
 
     def legal_actions(self, state, agent_id: str) -> list[Action]:
         """Actions that can do something: STAY, moves that don't walk into a wall (pushing or
@@ -165,7 +169,7 @@ class Referee:
                     first = (aid, dest[aid]) not in visited
                     visited.add((aid, dest[aid]))
                     events.append(Event(t, aid, EventKind.CHECKPOINT, dest[aid], payload={"first": first}))
-                elif tile is Tile.TRAP:
+                elif tile is Tile.TRAP and not (self.trap_off_flags & state.flags):
                     trapped.append(aid)
             elif actions.get(aid) is Action.INTERACT and pos[aid] in self.switches:
                 flag = self.switches[pos[aid]]

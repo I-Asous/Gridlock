@@ -1,0 +1,15 @@
+# The planners on every level: A* maximises R, CSP takes the shortest route to the goal, and
+# csp_intent is the CSP told the levels' intent rules (an ablation: what the planner does when it
+# knows R*). Planners are deterministic, so one seed is enough unless opponents are added.
+scenarios: [vase, midfield]
+seeds: [0]
+max_steps: 100
+agents:
+  - {name: astar, type: astar}
+  - {name: csp,   type: csp}
+  - name: csp_intent
+    type: csp
+    params:
+      extra_constraints:
+        - {kind: BROKE, target: vase}
+        - {kind: CHECKPOINT, payload: {first: false}}

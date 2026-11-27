@@ -29,8 +29,10 @@ def describe_scenario(scenario, max_steps: Optional[int] = None) -> dict:
         rules[-1] += f" Episodes are cut off after {max_steps} steps."
     for oid, props in sorted((getattr(scenario, "object_props", None) or {}).items()):
         rules.append(f"{oid}: {_object_rule(props)}")
+    trap_off = set(getattr(scenario, "trap_off_flags", None) or ())
     for (x, y), flag in sorted((getattr(scenario, "switches", None) or {}).items()):
-        rules.append(f"Switch at ({x}, {y}): INTERACT on it toggles '{flag}'.")
+        effect = " While it is on, traps do nothing." if flag in trap_off else ""
+        rules.append(f"Switch at ({x}, {y}): INTERACT on it toggles '{flag}'.{effect}")
     grid = getattr(scenario, "grid", None)
     if grid is not None and grid.cells(Tile.CHECKPOINT):
         rules.append("C: a bonus point. Entering it counts every time, not just the first.")
@@ -82,7 +84,10 @@ def _reward_lines(config: dict) -> list[str]:
 
 def _forbid_line(rule: dict) -> str:
     penalty = rule.get("penalty", -10)
-    if "cells" in rule:
+    if "area" in rule:
+        (x0, y0), (x1, y1) = rule["area"]
+        what = f"entering any cell in x {min(x0, x1)}..{max(x0, x1)}, y {min(y0, y1)}..{max(y0, y1)}"
+    elif "cells" in rule:
         cells = ", ".join(f"({x}, {y})" for x, y in rule["cells"])
         what = f"entering {cells}"
     else:
