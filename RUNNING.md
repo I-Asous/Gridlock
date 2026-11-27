@@ -2,14 +2,14 @@
 
 Every command-line script in the project, with its flags and what it writes, plus the usual order to run them in. For what the project is and how the packages fit together, see [README.md](README.md).
 
-> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. Eight levels exist, in `gridlock/scenarios/levels/`: `vase`, `midfield`, `lawn`, `racetrack`, `patrol` (a control level with no loophole), `safeguard`, and two 50×50 levels, `estate` and `expedition`. The online monitor works (see `gridlock/monitor/monitor.py`), and so do the A\* and CSP planners and the deep learners (DQN, PPO, A2C via Stable-Baselines3); the monitor's baselines are still stubs.
+> **Current state.** The engine works: the level loader, `GridWorld`, the referee, `RewardFn` and `IntentFn`. Nine levels exist, in `gridlock/scenarios/levels/`: `vase`, `midfield`, `lawn`, `racetrack`, `patrol` (a control level with no loophole), `safeguard`, two 50×50 levels, `estate` and `expedition`, and a two-agent level, `commons`. The online monitor works (see `gridlock/monitor/monitor.py`), and so do the A\* and CSP planners and the deep learners (DQN, PPO, A2C via Stable-Baselines3); the monitor's baselines are still stubs.
 
 ## Setup
 
 Python 3.10 or newer. The project is developed on 3.13.
 
 ```bash
-python3 -m pip install -r requirements.txt     # gymnasium, numpy, matplotlib, pyyaml, pytest
+python3 -m pip install -r requirements.txt     # gymnasium, numpy, matplotlib, pyyaml, pytest, pettingzoo
 python3 -m pip install -r requirements-deep.txt   # optional: stable-baselines3 and torch, for dqn/ppo/a2c
 ```
 
@@ -143,7 +143,7 @@ agents:
 - **`type`** is one of `random`, `greedy`, `astar`, `csp`, `q_learning`, `sarsa`, `dqn`, `ppo` or `a2c`. The last three need `requirements-deep.txt`.
 - **`params`** are passed to the agent's constructor.
 - **Planners** (`astar`, `csp`) plan at the start of each episode, modelling every other agent as standing still, and replan whenever the world stops matching the plan. `astar` plays the line with the most total R within `max_steps` (params: `max_expansions`, default 1,000,000). `csp` takes the shortest route to the goal (params: `horizon`, the longest plan it tries, default 30; `max_nodes`, the search budget per horizon, default 20,000; `extra_constraints`, a list of events to rule out, in the same format as an intent `forbid` rule, for example `[{kind: BROKE, target: vase}]`).
-- **`opponents`** (optional, default `random`) sets the agent type for every agent except the first. It can't be a learner.
+- **`opponents`** (optional, default `random`) sets the agent type for every agent except the first. It can't be a learner type. The exception is the special value `learner`, which only works with a tabular `type` (`q_learning` or `sarsa`): every agent then becomes its own learner of that type, and they all train together as independent learners on the PettingZoo view of the level (`gridlock/env/pz_env.py`). Their train logs add `R_by_agent` and `R_star_by_agent`.
 - **Learners** are trained on R alone, then evaluated greedily for one episode per seed. Tabular learners train for `train_episodes` episodes (default 1000), and deep learners for `train_steps` environment steps (default 50,000). A deep learner's `params` can include `policy: cnn` and any Stable-Baselines3 setting.
 - **`name`** labels the results, so it must be unique.
 - **`max_steps`** applies to levels that don't set their own. The 50×50 levels set `max_steps: 300` in their YAML, and that wins. On those levels, give the CSP planner a longer `horizon` (`large_levels.yaml` uses 250), because its default of 30 is shorter than any route there.
@@ -157,6 +157,7 @@ python -m gridlock.eval.runner experiments/sarsa_vs_q.yaml runs/sarsa_vs_q/resul
 python -m gridlock.eval.runner experiments/planners.yaml runs/planners/results.jsonl
 python -m gridlock.eval.runner experiments/all_levels.yaml runs/all_levels/results.jsonl
 python -m gridlock.eval.runner experiments/deep_vs_tabular.yaml runs/deep_vs_tabular/results.jsonl   # deep vs tabular, ~20 min
+python -m gridlock.eval.runner experiments/multi_agent.yaml runs/multi_agent/results.jsonl         # two agents on commons, ~2 min
 python -m gridlock.eval.runner experiments/large_levels.yaml runs/large_levels/results.jsonl   # 50x50 levels, about an hour
 ```
 
